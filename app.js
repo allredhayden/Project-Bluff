@@ -115,7 +115,15 @@ const dom = {
   settingsClose: document.querySelector("[data-settings-close]"),
   settingsModal: document.querySelector("[data-settings-modal]"),
   trackVolumeList: document.querySelector("[data-track-volume-list]"),
+  loopProgressToggle: document.querySelector("[data-loop-progress-toggle]"),
+  loopMeters: Array.from(document.querySelectorAll("[data-loop-meter]")),
 };
+
+const loopMeterFills = new Map(
+  dom.loopMeters
+    .map((meter) => [meter.dataset.loopMeter, meter.querySelector("[data-loop-meter-fill]")])
+    .filter((entry) => entry[0] && entry[1]),
+);
 
 let audioContext = null;
 let masterGain = null;
@@ -144,9 +152,10 @@ const preloadProgress = {
 };
 
 let focusedBeforeSettings = null;
+let loopProgressFrameId = null;
 
 function getDefaultTrackVolume(fileKey) {
-  return fileKey === "day" ? 0.5 : 1;
+  return fileKey === "day" || fileKey === "setupLoop" ? 0.5 : 1;
 }
 
 function createDefaultVolumeSettings() {
@@ -158,6 +167,7 @@ function createDefaultVolumeSettings() {
 
   return {
     master: 0.8,
+    showLoopProgress: false,
     tracks,
   };
 }
@@ -176,6 +186,7 @@ function loadVolumeSettings() {
   const defaults = createDefaultVolumeSettings();
   const settings = {
     master: defaults.master,
+    showLoopProgress: defaults.showLoopProgress,
     tracks: { ...defaults.tracks },
   };
 
@@ -193,6 +204,7 @@ function loadVolumeSettings() {
     }
 
     settings.master = clampVolume(parsed.master, defaults.master);
+    settings.showLoopProgress = parsed.showLoopProgress === true;
 
     if (parsed.tracks && typeof parsed.tracks === "object") {
       Object.keys(SOUND_FILES).forEach((fileKey) => {
@@ -327,6 +339,26 @@ function setTrackVolume(fileKey, volume, shouldSave = true) {
   }
 }
 
+function setLoopProgressEnabled(isEnabled, shouldSave = true) {
+  volumeSettings.showLoopProgress = isEnabled === true;
+  document.body.classList.toggle("loop-progress-enabled", volumeSettings.showLoopProgress);
+
+  if (dom.loopProgressToggle) {
+    dom.loopProgressToggle.checked = volumeSettings.showLoopProgress;
+  }
+
+  if (volumeSettings.showLoopProgress) {
+    updateLoopMeters();
+  } else {
+    stopLoopMeterUpdates();
+    resetAllLoopMeters();
+  }
+
+  if (shouldSave) {
+    saveVolumeSettings();
+  }
+}
+
 function renderTrackVolumeSettings() {
   dom.trackVolumeList.textContent = "";
 
@@ -379,11 +411,18 @@ function closeSettings() {
 
 function initializeVolumeUi() {
   setMasterVolume(volumeSettings.master, false);
+  setLoopProgressEnabled(volumeSettings.showLoopProgress, false);
   renderTrackVolumeSettings();
 
   dom.masterVolumeSlider.addEventListener("input", () => {
     setMasterVolume(percentToVolume(dom.masterVolumeSlider.value));
   });
+
+  if (dom.loopProgressToggle) {
+    dom.loopProgressToggle.addEventListener("change", () => {
+      setLoopProgressEnabled(dom.loopProgressToggle.checked);
+    });
+  }
 
   dom.settingsOpen.addEventListener("click", openSettings);
   dom.settingsClose.addEventListener("click", closeSettings);
@@ -455,6 +494,99 @@ function setCurrentStage(stage) {
   dom.stageStates.forEach((node) => {
     node.textContent = node.dataset.stageState === stage ? "Active" : "Ready";
   });
+}
+
+function setLoopMeterProgress(id, progress) {
+  const fill = loopMeterFills.get(id);
+
+  if (!fill) {
+    return;
+  }
+
+  const safeProgress = Math.max(0, Math.min(1, progress));
+  fill.style.transform = `scaleX(${safeProgress})`;
+}
+
+function resetLoopMeter(id) {
+  setLoopMeterProgress(id, 0);
+}
+
+function resetAllLoopMeters() {
+  loopMeterFills.forEach((_, id) => {
+    resetLoopMeter(id);
+  });
+}
+
+function getLoopProgress(track, atTime = audioContext.currentTime) {
+  const loopLength = track.loopEnd - track.loopStart;
+
+  if (loopLength <= 0) {
+    return 0;
+  }
+
+  const elapsed = Math.max(0, atTime - track.startedAt);
+  const rawPosition = track.startOffset + elapsed;
+
+  if (rawPosition < track.loopStart) {
+    return 0;
+  }
+
+  return (((rawPosition - track.loopStart) % loopLength) + loopLength) % loopLength / loopLength;
+}
+
+function updateLoopMeters() {
+  if (!volumeSettings.showLoopProgress || !audioContext || activeLoops.size === 0) {
+    loopProgressFrameId = null;
+    resetAllLoopMeters();
+    return;
+  }
+
+  const activeIds = new Set();
+  const now = audioContext.currentTime;
+
+  activeLoops.forEach((track, id) => {
+    activeIds.add(id);
+    setLoopMeterProgress(id, getLoopProgress(track, now));
+  });
+
+  loopMeterFills.forEach((_, id) => {
+    if (!activeIds.has(id)) {
+      resetLoopMeter(id);
+    }
+  });
+
+  if (typeof window.requestAnimationFrame === "function") {
+    loopProgressFrameId = window.requestAnimationFrame(updateLoopMeters);
+  }
+}
+
+function startLoopMeterUpdates() {
+  if (
+    !volumeSettings.showLoopProgress
+    || loopProgressFrameId !== null
+    || typeof window.requestAnimationFrame !== "function"
+  ) {
+    return;
+  }
+
+  loopProgressFrameId = window.requestAnimationFrame(updateLoopMeters);
+}
+
+function stopLoopMeterUpdates() {
+  if (loopProgressFrameId !== null && typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(loopProgressFrameId);
+  }
+
+  loopProgressFrameId = null;
+}
+
+function stopLoopMeterUpdatesIfIdle() {
+  if (activeLoops.size > 0) {
+    return;
+  }
+
+  stopLoopMeterUpdates();
+  resetAllLoopMeters();
 }
 
 function enableStopButton() {
@@ -843,12 +975,16 @@ function startLoop(id, options = {}) {
   source.addEventListener("ended", () => {
     if (activeLoops.get(id) === track) {
       activeLoops.delete(id);
+      resetLoopMeter(id);
+      stopLoopMeterUpdatesIfIdle();
     }
 
     clearStopTimer(track);
   });
 
   activeLoops.set(id, track);
+  setLoopMeterProgress(id, getLoopProgress(track, now));
+  startLoopMeterUpdates();
   source.start(now, startOffset);
   return track;
 }
@@ -912,6 +1048,8 @@ function stopSource(track, atTime = audioContext.currentTime) {
 
   if (track.type === "loop" && activeLoops.get(track.id) === track) {
     activeLoops.delete(track.id);
+    resetLoopMeter(track.id);
+    stopLoopMeterUpdatesIfIdle();
   }
 
   if (track.type === "oneShot") {
@@ -962,12 +1100,14 @@ function runSetupCue() {
 }
 
 function runNominationsCue() {
-  beginCue("nominations");
+  const cueId = beginCue("nominations");
 
-  fadeOutOtherLoops(["nominations", "day"]);
-  fadeOutLoop("day", FADE.stage);
+  fadeOutOtherLoops(["nominations"], FADE.stage);
   playOneShot("gong");
-  startLoop("nominations");
+
+  scheduleCueTask(cueId, 2, () => {
+    startLoop("nominations");
+  });
 
   setStatus("NOMINATIONS active.");
 }

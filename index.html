@@ -44,16 +44,19 @@
         <button class="stage-button" type="button" data-stage="setup" aria-pressed="false">
           <span class="stage-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M4 5h16"></path>
-              <path d="M4 12h16"></path>
-              <path d="M4 19h16"></path>
-              <path d="M8 3v4"></path>
-              <path d="M16 10v4"></path>
-              <path d="M11 17v4"></path>
+              <path d="M8.4 8.2h7.2"></path>
+              <path d="M9.2 8.2 6.8 6.3"></path>
+              <path d="m14.8 8.2 2.4-1.9"></path>
+              <path d="M8.4 8.2 6.8 19.4c-.1.9.6 1.6 1.5 1.6h7.4c.9 0 1.6-.7 1.5-1.6L15.6 8.2"></path>
+              <path d="M9.3 13.1c1.5.8 3.9.8 5.4 0"></path>
+              <path d="M10.2 8.1c.2-1.8 3.4-1.8 3.6 0"></path>
             </svg>
           </span>
           <span class="stage-name">SETUP</span>
           <span class="stage-state" data-stage-state="setup">Loading</span>
+          <span class="stage-loop-meter" data-loop-meter="setup" aria-hidden="true">
+            <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
+          </span>
         </button>
 
         <button class="stage-button" type="button" data-stage="day" aria-pressed="false">
@@ -72,6 +75,9 @@
           </span>
           <span class="stage-name">DAY</span>
           <span class="stage-state" data-stage-state="day">Loading</span>
+          <span class="stage-loop-meter" data-loop-meter="day" aria-hidden="true">
+            <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
+          </span>
         </button>
 
         <button class="stage-button" type="button" data-stage="nominations" aria-pressed="false">
@@ -85,6 +91,9 @@
           </span>
           <span class="stage-name">NOMINATIONS</span>
           <span class="stage-state" data-stage-state="nominations">Loading</span>
+          <span class="stage-loop-meter" data-loop-meter="nominations" aria-hidden="true">
+            <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
+          </span>
         </button>
 
         <button class="stage-button" type="button" data-stage="night" aria-pressed="false">
@@ -95,6 +104,9 @@
           </span>
           <span class="stage-name">NIGHT</span>
           <span class="stage-state" data-stage-state="night">Loading</span>
+          <span class="stage-loop-meter" data-loop-meter="night" aria-hidden="true">
+            <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
+          </span>
         </button>
       </section>
 
@@ -133,6 +145,14 @@
             </svg>
           </button>
         </header>
+        <label class="settings-checkbox-row">
+          <input
+            class="settings-checkbox"
+            type="checkbox"
+            data-loop-progress-toggle
+          >
+          <span class="settings-checkbox-label">Show Loop Progress</span>
+        </label>
         <div class="settings-track-list" data-track-volume-list></div>
       </div>
     </section>

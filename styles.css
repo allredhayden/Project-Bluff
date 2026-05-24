@@ -17,6 +17,9 @@
   --pg-orange-strong: #ff9a3d;
   --pg-orange-soft: #2a1608;
   --pg-orange-border: #8a4518;
+  --pg-loop: #9ca35a;
+  --pg-loop-soft: #111408;
+  --pg-loop-border: #4d5325;
   --pg-live: #22c55e;
   --pg-live-soft: #0b2113;
   --pg-live-border: #267a43;
@@ -235,6 +238,7 @@ h1 {
 }
 
 .stage-button {
+  position: relative;
   width: 100%;
   min-height: 92px;
   border: 1px solid var(--pg-border);
@@ -249,7 +253,12 @@ h1 {
   text-align: left;
   cursor: pointer;
   transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  overflow: hidden;
   -webkit-tap-highlight-color: transparent;
+}
+
+body.loop-progress-enabled .stage-button {
+  padding-bottom: 20px;
 }
 
 .stage-button:active {
@@ -329,6 +338,32 @@ h1 {
 .stage-button[aria-pressed="true"] .stage-name,
 .stage-button[aria-pressed="true"] .stage-icon {
   color: var(--pg-orange-strong);
+}
+
+.stage-loop-meter {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 10px;
+  overflow: hidden;
+  border-top: 1px solid var(--pg-border-soft);
+  background: var(--pg-surface-inset);
+  pointer-events: none;
+}
+
+body:not(.loop-progress-enabled) .stage-loop-meter {
+  display: none;
+}
+
+.stage-loop-meter-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--pg-loop);
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
 }
 
 .transport {
@@ -427,6 +462,49 @@ h1 {
   line-height: 1.05;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.settings-checkbox-row {
+  min-height: 42px;
+  border: 1px solid var(--pg-border);
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  background: var(--pg-surface);
+  padding: 8px;
+  cursor: pointer;
+}
+
+.settings-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border-radius: 0;
+  accent-color: var(--pg-loop);
+}
+
+.settings-checkbox:focus-visible {
+  outline: 1px solid var(--pg-orange);
+  outline-offset: 2px;
+}
+
+.settings-checkbox-label {
+  color: var(--pg-text-muted);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.72rem;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-checkbox-row:has(.settings-checkbox:checked) {
+  border-color: var(--pg-loop-border);
+  background: var(--pg-loop-soft);
+}
+
+.settings-checkbox-row:has(.settings-checkbox:checked) .settings-checkbox-label {
+  color: var(--pg-loop);
 }
 
 .settings-track-list {
