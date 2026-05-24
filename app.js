@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v7";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v8";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -14,6 +14,16 @@ const SOUND_FILES = {
     label: "Bells",
     path: "sounds/BotC Bells.wav",
     bytes: 3054198,
+  },
+  gong: {
+    label: "Gong",
+    path: "sounds/BotC Gong.mp3",
+    bytes: 310124,
+  },
+  setupLoop: {
+    label: "Setup Loop",
+    path: "sounds/BotC Setup Loop.mp3",
+    bytes: 3466552,
   },
   day: {
     label: "Day Loop",
@@ -40,12 +50,18 @@ const SOUND_FILES = {
 const VOLUME_STORAGE_KEY = "project-bluff-volume-settings-v1";
 
 const STAGES = {
+  setup: "SETUP",
   day: "DAY",
   nominations: "NOMINATIONS",
   night: "NIGHT",
 };
 
 const LOOP_CONFIG = {
+  setup: {
+    file: "setupLoop",
+    offset: 0,
+    loopStart: 28.369,
+  },
   day: {
     file: "day",
     offset: 0,
@@ -68,6 +84,10 @@ const LOOP_CONFIG = {
 const ONE_SHOTS = {
   bells: {
     file: "bells",
+    offset: 0,
+  },
+  gong: {
+    file: "gong",
     offset: 0,
   },
   nightIntro: {
@@ -932,11 +952,21 @@ function runDayCue() {
   setStatus("DAY active.");
 }
 
+function runSetupCue() {
+  beginCue("setup");
+
+  fadeOutOtherLoops(["setup"]);
+  startLoop("setup");
+
+  setStatus("SETUP active.");
+}
+
 function runNominationsCue() {
   beginCue("nominations");
 
   fadeOutOtherLoops(["nominations", "day"]);
   fadeOutLoop("day", FADE.stage);
+  playOneShot("gong");
   startLoop("nominations");
 
   setStatus("NOMINATIONS active.");
@@ -957,6 +987,11 @@ function runNightCue() {
 }
 
 function runStageCue(stage) {
+  if (stage === "setup") {
+    runSetupCue();
+    return;
+  }
+
   if (stage === "day") {
     runDayCue();
     return;
