@@ -1,7 +1,13 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v6";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v7";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
+
+const MEDIA_METADATA = {
+  title: "Blood on the Clocktower",
+  artist: "Project Bluff",
+  album: "Soundtrack",
+};
 
 const SOUND_FILES = {
   bells: {
@@ -30,6 +36,8 @@ const SOUND_FILES = {
     bytes: 18616946,
   },
 };
+
+const VOLUME_STORAGE_KEY = "project-bluff-volume-settings-v1";
 
 const STAGES = {
   day: "DAY",
@@ -74,6 +82,8 @@ const FADE = {
 };
 
 const dom = {
+  masterVolumeSlider: document.querySelector('[data-volume-slider="master"]'),
+  masterVolumeValue: document.querySelector('[data-volume-value="master"]'),
   stageButtons: Array.from(document.querySelectorAll("[data-stage]")),
   stageStates: Array.from(document.querySelectorAll("[data-stage-state]")),
   stopButton: document.querySelector("[data-stop]"),
@@ -81,6 +91,10 @@ const dom = {
   activeStage: document.querySelector("[data-active-stage]"),
   preloadProgress: document.querySelector("[data-preload-progress]"),
   preloadProgressFill: document.querySelector("[data-preload-progress-fill]"),
+  settingsOpen: document.querySelector("[data-settings-open]"),
+  settingsClose: document.querySelector("[data-settings-close]"),
+  settingsModal: document.querySelector("[data-settings-modal]"),
+  trackVolumeList: document.querySelector("[data-track-volume-list]"),
 };
 
 let audioContext = null;
@@ -90,6 +104,7 @@ let buffers = {};
 let currentStage = null;
 let currentCueId = 0;
 let controlsBusy = false;
+let audioSessionWarningShown = false;
 
 const activeLoops = new Map();
 const activeOneShots = new Set();
@@ -99,12 +114,266 @@ const loopResumeOffsets = {
   day: 0,
 };
 
+const volumeSettings = loadVolumeSettings();
+
 const preloadProgress = {
   decoded: 0,
   downloaded: {},
   total: Object.values(SOUND_FILES).reduce((sum, file) => sum + file.bytes, 0)
     + Object.keys(SOUND_FILES).length * DECODE_WORK_UNITS,
 };
+
+let focusedBeforeSettings = null;
+
+function getDefaultTrackVolume(fileKey) {
+  return fileKey === "day" ? 0.5 : 1;
+}
+
+function createDefaultVolumeSettings() {
+  const tracks = {};
+
+  Object.keys(SOUND_FILES).forEach((fileKey) => {
+    tracks[fileKey] = getDefaultTrackVolume(fileKey);
+  });
+
+  return {
+    master: 0.8,
+    tracks,
+  };
+}
+
+function clampVolume(value, fallback = 1) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(1, number));
+}
+
+function loadVolumeSettings() {
+  const defaults = createDefaultVolumeSettings();
+  const settings = {
+    master: defaults.master,
+    tracks: { ...defaults.tracks },
+  };
+
+  try {
+    const stored = window.localStorage.getItem(VOLUME_STORAGE_KEY);
+
+    if (!stored) {
+      return settings;
+    }
+
+    const parsed = JSON.parse(stored);
+
+    if (!parsed || typeof parsed !== "object") {
+      return settings;
+    }
+
+    settings.master = clampVolume(parsed.master, defaults.master);
+
+    if (parsed.tracks && typeof parsed.tracks === "object") {
+      Object.keys(SOUND_FILES).forEach((fileKey) => {
+        settings.tracks[fileKey] = clampVolume(parsed.tracks[fileKey], defaults.tracks[fileKey]);
+      });
+    }
+  } catch (error) {
+    console.warn("Could not load saved volume settings.", error);
+  }
+
+  return settings;
+}
+
+function saveVolumeSettings() {
+  try {
+    window.localStorage.setItem(VOLUME_STORAGE_KEY, JSON.stringify(volumeSettings));
+  } catch (error) {
+    console.warn("Could not save volume settings.", error);
+  }
+}
+
+function volumeToPercent(value) {
+  return Math.round(clampVolume(value, 0) * 100);
+}
+
+function percentToVolume(value) {
+  return clampVolume(Number(value) / 100, 1);
+}
+
+function setVolumeControlUi(slider, valueNode, volume) {
+  const percent = volumeToPercent(volume);
+
+  if (slider) {
+    slider.value = String(percent);
+    slider.setAttribute("aria-valuetext", `${percent}%`);
+  }
+
+  if (valueNode) {
+    valueNode.textContent = `${percent}%`;
+  }
+}
+
+function getTrackVolume(fileKey) {
+  const fallback = getDefaultTrackVolume(fileKey);
+  return clampVolume(volumeSettings.tracks[fileKey], fallback);
+}
+
+function getTrackTargetGain(track) {
+  return getTrackVolume(track.fileKey || track.id);
+}
+
+function applyMasterVolume() {
+  if (!audioContext || !masterGain) {
+    return;
+  }
+
+  const now = audioContext.currentTime;
+  masterGain.gain.cancelScheduledValues(now);
+  masterGain.gain.setValueAtTime(volumeSettings.master, now);
+}
+
+function setMasterVolume(volume, shouldSave = true) {
+  volumeSettings.master = clampVolume(volume, 0.8);
+  setVolumeControlUi(dom.masterVolumeSlider, dom.masterVolumeValue, volumeSettings.master);
+  applyMasterVolume();
+
+  if (shouldSave) {
+    saveVolumeSettings();
+  }
+}
+
+function updateActiveTrackVolume(track, atTime = audioContext.currentTime) {
+  if (!audioContext || !track || track.stopping) {
+    return;
+  }
+
+  const targetGain = getTrackTargetGain(track);
+  const currentGain = getTrackGainValue(track, atTime);
+  const activeRamp = track.gainRamp && track.gainRamp.endTime > atTime && track.gainRamp.endValue > 0;
+
+  if (!activeRamp) {
+    setTrackGain(track, targetGain, atTime);
+    return;
+  }
+
+  const endTime = track.gainRamp.endTime;
+  track.gainRamp = {
+    startTime: atTime,
+    startValue: currentGain,
+    endTime,
+    endValue: targetGain,
+  };
+  track.gain.gain.cancelScheduledValues(atTime);
+  track.gain.gain.setValueAtTime(currentGain, atTime);
+  track.gain.gain.linearRampToValueAtTime(targetGain, endTime);
+}
+
+function applyTrackVolumeToActive(fileKey) {
+  if (!audioContext) {
+    return;
+  }
+
+  const now = audioContext.currentTime;
+
+  activeLoops.forEach((track) => {
+    if (track.fileKey === fileKey) {
+      updateActiveTrackVolume(track, now);
+    }
+  });
+
+  activeOneShots.forEach((track) => {
+    if (track.fileKey === fileKey) {
+      updateActiveTrackVolume(track, now);
+    }
+  });
+}
+
+function setTrackVolume(fileKey, volume, shouldSave = true) {
+  if (!SOUND_FILES[fileKey]) {
+    return;
+  }
+
+  volumeSettings.tracks[fileKey] = clampVolume(volume, getDefaultTrackVolume(fileKey));
+
+  const slider = dom.trackVolumeList.querySelector(`[data-track-volume="${fileKey}"]`);
+  const valueNode = dom.trackVolumeList.querySelector(`[data-track-volume-value="${fileKey}"]`);
+  setVolumeControlUi(slider, valueNode, volumeSettings.tracks[fileKey]);
+  applyTrackVolumeToActive(fileKey);
+
+  if (shouldSave) {
+    saveVolumeSettings();
+  }
+}
+
+function renderTrackVolumeSettings() {
+  dom.trackVolumeList.textContent = "";
+
+  Object.entries(SOUND_FILES).forEach(([fileKey, file]) => {
+    const label = document.createElement("label");
+    const name = document.createElement("span");
+    const slider = document.createElement("input");
+    const value = document.createElement("span");
+
+    label.className = "volume-control track-volume-control";
+    name.className = "volume-control-label";
+    name.textContent = file.label;
+
+    slider.className = "volume-slider";
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.step = "1";
+    slider.dataset.trackVolume = fileKey;
+    slider.setAttribute("aria-label", `${file.label} volume`);
+
+    value.className = "volume-value";
+    value.dataset.trackVolumeValue = fileKey;
+
+    slider.addEventListener("input", () => {
+      setTrackVolume(fileKey, percentToVolume(slider.value));
+    });
+
+    label.append(name, slider, value);
+    dom.trackVolumeList.append(label);
+    setVolumeControlUi(slider, value, getTrackVolume(fileKey));
+  });
+}
+
+function openSettings() {
+  focusedBeforeSettings = document.activeElement;
+  dom.settingsModal.hidden = false;
+  document.body.classList.add("settings-open");
+  dom.settingsClose.focus();
+}
+
+function closeSettings() {
+  dom.settingsModal.hidden = true;
+  document.body.classList.remove("settings-open");
+
+  if (focusedBeforeSettings && typeof focusedBeforeSettings.focus === "function") {
+    focusedBeforeSettings.focus();
+  }
+}
+
+function initializeVolumeUi() {
+  setMasterVolume(volumeSettings.master, false);
+  renderTrackVolumeSettings();
+
+  dom.masterVolumeSlider.addEventListener("input", () => {
+    setMasterVolume(percentToVolume(dom.masterVolumeSlider.value));
+  });
+
+  dom.settingsOpen.addEventListener("click", openSettings);
+  dom.settingsClose.addEventListener("click", closeSettings);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !dom.settingsModal.hidden) {
+      closeSettings();
+    }
+  });
+}
 
 function setStatus(message) {
   dom.status.textContent = message;
@@ -173,6 +442,41 @@ function enableStopButton() {
   dom.stopButton.style.cursor = "pointer";
 }
 
+function configurePlaybackSession() {
+  if (typeof navigator === "undefined") {
+    return;
+  }
+
+  if ("audioSession" in navigator) {
+    try {
+      navigator.audioSession.type = "playback";
+    } catch (error) {
+      if (!audioSessionWarningShown) {
+        console.warn("Could not set audio session type to playback.", error);
+        audioSessionWarningShown = true;
+      }
+    }
+  }
+
+  if ("mediaSession" in navigator) {
+    if (window.MediaMetadata && !navigator.mediaSession.metadata) {
+      navigator.mediaSession.metadata = new window.MediaMetadata(MEDIA_METADATA);
+    }
+
+    navigator.mediaSession.playbackState = currentStage ? "playing" : "none";
+  }
+}
+
+function setMediaPlaybackState(state) {
+  if (typeof navigator === "undefined") {
+    return;
+  }
+
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.playbackState = state;
+  }
+}
+
 function makeAudioContext() {
   if (!AudioContextClass) {
     throw new Error("This browser does not support the Web Audio API.");
@@ -181,7 +485,7 @@ function makeAudioContext() {
   if (!audioContext) {
     audioContext = new AudioContextClass();
     masterGain = audioContext.createGain();
-    masterGain.gain.value = 1;
+    masterGain.gain.value = volumeSettings.master;
     masterGain.connect(audioContext.destination);
   }
 
@@ -206,6 +510,7 @@ async function preloadAudio() {
   setStatus("Preloading audio files...");
 
   try {
+    configurePlaybackSession();
     makeAudioContext();
     await queueBufferLoad();
     setCurrentStage(null);
@@ -224,6 +529,7 @@ async function preloadAudio() {
 }
 
 async function ensureAudioReady() {
+  configurePlaybackSession();
   const context = makeAudioContext();
 
   await queueBufferLoad();
@@ -456,11 +762,11 @@ function playOneShot(id) {
   const gain = audioContext.createGain();
   const offset = clampTime(config.offset, buffer, 0);
   const duration = Math.max(0, buffer.duration - offset);
-  const track = { id, source, gain, type: "oneShot" };
+  const track = { id, fileKey: config.file, source, gain, type: "oneShot" };
 
   source.buffer = buffer;
   connectSource(source, gain);
-  setTrackGain(track, 1);
+  setTrackGain(track, getTrackTargetGain(track));
 
   source.addEventListener("ended", () => {
     activeOneShots.delete(track);
@@ -490,6 +796,7 @@ function startLoop(id, options = {}) {
     : clampedOffset;
   const track = {
     id,
+    fileKey: config.file,
     source,
     gain,
     type: "loop",
@@ -508,9 +815,9 @@ function startLoop(id, options = {}) {
 
   if (fadeIn > 0) {
     setTrackGain(track, 0, now);
-    rampTrackGain(track, 1, fadeIn, now);
+    rampTrackGain(track, getTrackTargetGain(track), fadeIn, now);
   } else {
-    setTrackGain(track, 1, now);
+    setTrackGain(track, getTrackTargetGain(track), now);
   }
 
   source.addEventListener("ended", () => {
@@ -605,6 +912,8 @@ function beginCue(stage) {
   clearCueTimers();
   fadeOutOneShots();
   setCurrentStage(stage);
+  configurePlaybackSession();
+  setMediaPlaybackState("playing");
   enableStopButton();
   return currentCueId;
 }
@@ -702,6 +1011,7 @@ async function stopAll() {
     activeLoops.forEach((track) => fadeOutTrack(track, FADE.stopAll));
     activeOneShots.forEach((track) => fadeOutTrack(track, FADE.stopAll));
     setCurrentStage(null);
+    setMediaPlaybackState("none");
     setStatus("Stopping.");
 
     window.setTimeout(() => {
@@ -713,6 +1023,8 @@ async function stopAll() {
     setControlsBusy(false);
   }
 }
+
+initializeVolumeUi();
 
 dom.stageButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -728,4 +1040,5 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+configurePlaybackSession();
 preloadAudio();

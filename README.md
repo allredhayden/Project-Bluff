@@ -18,6 +18,12 @@ http://localhost:4173
 
 The app starts preloading and decoding every file in `sounds/` as soon as the page opens. The progress bar shows download and decode progress. The first stage tap resumes browser audio playback and starts the selected cue.
 
+## iPhone playback
+
+On iOS 17 and newer, the app asks Safari for a `playback` audio session and sets Media Session metadata/state. This is the web platform path that can allow audio to continue with the Silent switch enabled and while the screen is locked.
+
+iOS support still depends on Safari/WebKit. If a device or browser version ignores the web audio session request, a fully guaranteed solution requires a native iOS wrapper/app configured with Apple's playback audio session category and background audio mode.
+
 ## Local storage
 
 The app uses the browser Cache Storage API and a service worker to save the app shell and audio files locally after they load. That means later visits can reuse the local copies instead of downloading the files again, and the app can keep working when the browser allows the cached files offline.

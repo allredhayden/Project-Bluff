@@ -43,9 +43,104 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+body.settings-open {
+  overflow: hidden;
+}
+
 button {
   border-radius: 0;
   font: inherit;
+}
+
+.master-volume-rail {
+  width: 100%;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-rail);
+  padding: 7px 8px;
+}
+
+.volume-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+}
+
+.master-volume-control {
+  width: 100%;
+}
+
+.volume-control-label,
+.volume-value {
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.volume-control-label {
+  color: var(--pg-text-muted);
+}
+
+.volume-value {
+  color: var(--pg-orange-strong);
+  text-align: right;
+}
+
+.volume-slider {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--pg-orange);
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.volume-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 1px solid var(--pg-border);
+  border-radius: 0;
+  background: var(--pg-surface-inset);
+}
+
+.volume-slider::-webkit-slider-thumb {
+  width: 14px;
+  height: 24px;
+  margin-top: -9px;
+  border: 1px solid var(--pg-orange-border);
+  border-radius: 0;
+  background: var(--pg-orange);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.volume-slider::-moz-range-track {
+  height: 8px;
+  border: 1px solid var(--pg-border);
+  border-radius: 0;
+  background: var(--pg-surface-inset);
+}
+
+.volume-slider::-moz-range-progress {
+  height: 8px;
+  border-radius: 0;
+  background: var(--pg-orange);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 24px;
+  border: 1px solid var(--pg-orange-border);
+  border-radius: 0;
+  background: var(--pg-orange);
+}
+
+.volume-slider:focus-visible {
+  outline: 1px solid var(--pg-orange);
+  outline-offset: 2px;
 }
 
 .app {
@@ -62,7 +157,7 @@ button {
 .topbar {
   min-height: 48px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto 38px;
   align-items: center;
   gap: 8px;
   border: 1px solid var(--pg-border);
@@ -101,6 +196,37 @@ h1 {
   text-transform: uppercase;
 }
 
+.settings-button,
+.settings-close-button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: 0;
+  display: grid;
+  place-items: center;
+  background: var(--pg-surface-inset);
+  color: var(--pg-text-muted);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.settings-button:active,
+.settings-close-button:active {
+  background: var(--pg-surface-strong);
+  color: var(--pg-orange-strong);
+}
+
+.settings-button svg,
+.settings-close-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .stage-controls {
   display: grid;
   gap: 6px;
@@ -115,7 +241,7 @@ h1 {
   border-radius: 0;
   padding: 10px 12px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   background: var(--pg-surface);
@@ -131,7 +257,9 @@ h1 {
 }
 
 .stage-button:focus-visible,
-.stop-button:focus-visible {
+.stop-button:focus-visible,
+.settings-button:focus-visible,
+.settings-close-button:focus-visible {
   outline: 1px solid var(--pg-orange);
   outline-offset: 2px;
   border-color: var(--pg-orange-border);
@@ -162,6 +290,32 @@ h1 {
   letter-spacing: 0;
 }
 
+.stage-icon {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--pg-border-strong);
+  display: grid;
+  place-items: center;
+  color: var(--pg-text-dim);
+  background: var(--pg-surface-inset);
+}
+
+.stage-icon svg {
+  width: 25px;
+  height: 25px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.stage-icon-nominations svg {
+  width: 29px;
+  height: 29px;
+  stroke-width: 1.7;
+}
+
 .stage-state {
   flex: 0 0 auto;
   color: var(--pg-text-dim);
@@ -172,7 +326,8 @@ h1 {
 }
 
 .stage-button[aria-pressed="true"] .stage-state,
-.stage-button[aria-pressed="true"] .stage-name {
+.stage-button[aria-pressed="true"] .stage-name,
+.stage-button[aria-pressed="true"] .stage-icon {
   color: var(--pg-orange-strong);
 }
 
@@ -230,6 +385,60 @@ h1 {
   font-size: 0.72rem;
   line-height: 1.25;
   text-align: center;
+}
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow: auto;
+  background: var(--pg-bg);
+  padding: max(10px, env(safe-area-inset-top)) 8px max(10px, env(safe-area-inset-bottom));
+}
+
+.settings-modal[hidden] {
+  display: none;
+}
+
+.settings-sheet {
+  width: min(100%, 460px);
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-header {
+  min-height: 48px;
+  border: 1px solid var(--pg-border);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 8px;
+  background: var(--pg-rail);
+  padding: 7px 8px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  color: var(--pg-text);
+  font-size: 1rem;
+  line-height: 1.05;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.settings-track-list {
+  display: grid;
+  gap: 6px;
+}
+
+.track-volume-control {
+  min-height: 56px;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+  padding: 8px;
 }
 
 @media (min-width: 700px) {

@@ -15,20 +15,69 @@
           <h1 id="app-title">Soundtrack</h1>
         </div>
         <div class="stage-indicator" data-active-stage>Idle</div>
+        <button class="settings-button" type="button" data-settings-open aria-label="Open audio settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
+            <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2 2 0 0 1-2.82 2.82l-.04-.04A1.8 1.8 0 0 0 14.96 19a1.8 1.8 0 0 0-1.08 1.64V20.8a2 2 0 0 1-4 0v-.06A1.8 1.8 0 0 0 8.8 19a1.8 1.8 0 0 0-1.98.36l-.04.04a2 2 0 0 1-2.82-2.82l.04-.04A1.8 1.8 0 0 0 4.36 15a1.8 1.8 0 0 0-1.64-1.08H2.6a2 2 0 0 1 0-4h.12A1.8 1.8 0 0 0 4.36 8a1.8 1.8 0 0 0-.36-1.98l-.04-.04A2 2 0 0 1 6.78 3.16l.04.04A1.8 1.8 0 0 0 8.8 3.56a1.8 1.8 0 0 0 1.08-1.64V1.8a2 2 0 0 1 4 0v.12a1.8 1.8 0 0 0 1.08 1.64 1.8 1.8 0 0 0 1.98-.36l.04-.04a2 2 0 0 1 2.82 2.82l-.04.04A1.8 1.8 0 0 0 19.4 8a1.8 1.8 0 0 0 1.64 1.08h.16a2 2 0 0 1 0 4h-.16A1.8 1.8 0 0 0 19.4 15Z"></path>
+          </svg>
+        </button>
       </header>
+
+      <div class="master-volume-rail" data-master-volume-rail>
+        <label class="volume-control master-volume-control">
+          <span class="volume-control-label">Master</span>
+          <input
+            class="volume-slider"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="80"
+            data-volume-slider="master"
+            aria-label="Master volume"
+          >
+          <span class="volume-value" data-volume-value="master">80%</span>
+        </label>
+      </div>
 
       <section class="stage-controls" aria-label="Game stage controls">
         <button class="stage-button" type="button" data-stage="day" aria-pressed="false">
+          <span class="stage-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+              <path d="m4.93 4.93 2.12 2.12"></path>
+              <path d="m16.95 16.95 2.12 2.12"></path>
+              <path d="M2 12h3"></path>
+              <path d="M19 12h3"></path>
+              <path d="m4.93 19.07 2.12-2.12"></path>
+              <path d="m16.95 7.05 2.12-2.12"></path>
+            </svg>
+          </span>
           <span class="stage-name">DAY</span>
           <span class="stage-state" data-stage-state="day">Loading</span>
         </button>
 
         <button class="stage-button" type="button" data-stage="nominations" aria-pressed="false">
+          <span class="stage-icon stage-icon-nominations" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M10.5 3.5a2 2 0 0 1 4 0v7.1l.35-.35a2 2 0 0 1 2.83 0l2.57 2.57c.48.48.75 1.13.75 1.81V17a5 5 0 0 1-5 5h-3.3a6 6 0 0 1-4.24-1.76l-3.28-3.28a2 2 0 1 1 2.83-2.83l2.49 2.49V3.5Z"></path>
+              <path d="M14.5 10.6V14"></path>
+              <path d="M17 10.5V14"></path>
+              <path d="M10.5 16.6V3.5"></path>
+            </svg>
+          </span>
           <span class="stage-name">NOMINATIONS</span>
           <span class="stage-state" data-stage-state="nominations">Loading</span>
         </button>
 
         <button class="stage-button" type="button" data-stage="night" aria-pressed="false">
+          <span class="stage-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M20 14.4A7.5 7.5 0 0 1 9.6 4a8.2 8.2 0 1 0 10.4 10.4Z"></path>
+            </svg>
+          </span>
           <span class="stage-name">NIGHT</span>
           <span class="stage-state" data-stage-state="night">Loading</span>
         </button>
@@ -50,5 +99,27 @@
         <p class="status-line" data-status role="status" aria-live="polite">Preloading audio files...</p>
       </footer>
     </main>
+
+    <section
+      class="settings-modal"
+      data-settings-modal
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+      hidden
+    >
+      <div class="settings-sheet">
+        <header class="settings-header">
+          <h2 id="settings-title">Audio Settings</h2>
+          <button class="settings-close-button" type="button" data-settings-close aria-label="Close audio settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m6 6 12 12"></path>
+              <path d="M18 6 6 18"></path>
+            </svg>
+          </button>
+        </header>
+        <div class="settings-track-list" data-track-volume-list></div>
+      </div>
+    </section>
   </body>
 </html>
