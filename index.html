@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Blood on the Clocktower Soundtrack</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <main class="app" aria-labelledby="app-title">
+      <header class="topbar">
+        <div>
+          <p class="game-title">Blood on the Clocktower</p>
+          <h1 id="app-title">Soundtrack</h1>
+        </div>
+        <div class="stage-indicator" data-active-stage>Idle</div>
+      </header>
+
+      <section class="stage-controls" aria-label="Game stage controls">
+        <button class="stage-button" type="button" data-stage="day" aria-pressed="false">
+          <span class="stage-name">DAY</span>
+          <span class="stage-state" data-stage-state="day">Loading</span>
+        </button>
+
+        <button class="stage-button" type="button" data-stage="nominations" aria-pressed="false">
+          <span class="stage-name">NOMINATIONS</span>
+          <span class="stage-state" data-stage-state="nominations">Loading</span>
+        </button>
+
+        <button class="stage-button" type="button" data-stage="night" aria-pressed="false">
+          <span class="stage-name">NIGHT</span>
+          <span class="stage-state" data-stage-state="night">Loading</span>
+        </button>
+      </section>
+
+      <footer class="transport">
+        <div
+          class="preload-progress"
+          data-preload-progress
+          role="progressbar"
+          aria-label="Audio preload progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <div class="preload-progress-fill" data-preload-progress-fill></div>
+        </div>
+        <button class="stop-button" type="button" data-stop disabled>Stop All</button>
+        <p class="status-line" data-status role="status" aria-live="polite">Preloading audio files...</p>
+      </footer>
+    </main>
+  </body>
+</html>
