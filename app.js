@@ -63,6 +63,8 @@ const SOUND_FILES = {
 };
 
 const VOLUME_STORAGE_KEY = "project-bluff-volume-settings-v1";
+const CUE_TIMER_UPDATE_MS = 250;
+const VOLUME_DEFAULTS_VERSION = 2;
 
 const STAGES = {
   setup: "SETUP",
@@ -94,6 +96,18 @@ const LOOP_CONFIG = {
     loopEnd: 228.104,
     fadeIn: 2,
   },
+};
+
+const DEFAULT_TRACK_VOLUMES = {
+  setupLoop: 0.67,
+  day: 0.5,
+  maleScream: 0.33,
+  femaleScream: 0.33,
+};
+
+const PREVIOUS_DEFAULT_TRACK_VOLUMES = {
+  setupLoop: 0.5,
+  day: 0.5,
 };
 
 const ONE_SHOTS = {
@@ -132,7 +146,7 @@ const dom = {
   masterVolumeSlider: document.querySelector('[data-volume-slider="master"]'),
   masterVolumeValue: document.querySelector('[data-volume-value="master"]'),
   stageButtons: Array.from(document.querySelectorAll("[data-stage]")),
-  stageStates: Array.from(document.querySelectorAll("[data-stage-state]")),
+  stageTimers: Array.from(document.querySelectorAll("[data-stage-timer]")),
   stopButton: document.querySelector("[data-stop]"),
   status: document.querySelector("[data-status]"),
   activeStage: document.querySelector("[data-active-stage]"),
@@ -163,6 +177,8 @@ let currentStage = null;
 let currentCueId = 0;
 let controlsBusy = false;
 let audioSessionWarningShown = false;
+let activeCueStartedAt = null;
+let activeCueTimerIntervalId = null;
 
 const activeLoops = new Map();
 const activeOneShots = new Set();
@@ -193,7 +209,15 @@ const murderSoundState = {
 };
 
 function getDefaultTrackVolume(fileKey) {
-  return fileKey === "day" || fileKey === "setupLoop" ? 0.5 : 1;
+  return DEFAULT_TRACK_VOLUMES[fileKey] ?? 1;
+}
+
+function getPreviousDefaultTrackVolume(fileKey) {
+  return PREVIOUS_DEFAULT_TRACK_VOLUMES[fileKey] ?? 1;
+}
+
+function volumesMatch(first, second) {
+  return Math.abs(first - second) < 0.001;
 }
 
 function createDefaultVolumeSettings() {
@@ -206,6 +230,7 @@ function createDefaultVolumeSettings() {
   return {
     master: 0.8,
     showLoopProgress: false,
+    defaultTrackVolumesVersion: VOLUME_DEFAULTS_VERSION,
     tracks,
   };
 }
@@ -225,6 +250,7 @@ function loadVolumeSettings() {
   const settings = {
     master: defaults.master,
     showLoopProgress: defaults.showLoopProgress,
+    defaultTrackVolumesVersion: defaults.defaultTrackVolumesVersion,
     tracks: { ...defaults.tracks },
   };
 
@@ -245,8 +271,14 @@ function loadVolumeSettings() {
     settings.showLoopProgress = parsed.showLoopProgress === true;
 
     if (parsed.tracks && typeof parsed.tracks === "object") {
+      const shouldMigrateDefaultTracks = parsed.defaultTrackVolumesVersion !== VOLUME_DEFAULTS_VERSION;
+
       Object.keys(SOUND_FILES).forEach((fileKey) => {
-        settings.tracks[fileKey] = clampVolume(parsed.tracks[fileKey], defaults.tracks[fileKey]);
+        const parsedVolume = clampVolume(parsed.tracks[fileKey], defaults.tracks[fileKey]);
+        const previousDefault = getPreviousDefaultTrackVolume(fileKey);
+        settings.tracks[fileKey] = shouldMigrateDefaultTracks && volumesMatch(parsedVolume, previousDefault)
+          ? defaults.tracks[fileKey]
+          : parsedVolume;
       });
     }
   } catch (error) {
@@ -705,10 +737,59 @@ function setControlsBusy(isBusy) {
   });
 }
 
-function setAllStageStates(label) {
-  dom.stageStates.forEach((node) => {
-    node.textContent = label;
+function formatCueElapsed(elapsedMs) {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function clearCueTimersDisplay() {
+  dom.stageTimers.forEach((node) => {
+    node.textContent = "";
+    node.removeAttribute("aria-label");
   });
+}
+
+function updateCueTimersDisplay() {
+  if (!currentStage || activeCueStartedAt === null) {
+    clearCueTimersDisplay();
+    return;
+  }
+
+  const elapsedLabel = formatCueElapsed(performance.now() - activeCueStartedAt);
+
+  dom.stageTimers.forEach((node) => {
+    const isActive = node.dataset.stageTimer === currentStage;
+    node.textContent = isActive ? elapsedLabel : "";
+
+    if (isActive) {
+      node.setAttribute("aria-label", `${elapsedLabel} in ${STAGES[currentStage]} cue`);
+    } else {
+      node.removeAttribute("aria-label");
+    }
+  });
+}
+
+function startActiveCueTimer() {
+  activeCueStartedAt = performance.now();
+  updateCueTimersDisplay();
+
+  if (activeCueTimerIntervalId === null) {
+    activeCueTimerIntervalId = window.setInterval(updateCueTimersDisplay, CUE_TIMER_UPDATE_MS);
+  }
+}
+
+function stopActiveCueTimer() {
+  activeCueStartedAt = null;
+
+  if (activeCueTimerIntervalId !== null) {
+    window.clearInterval(activeCueTimerIntervalId);
+    activeCueTimerIntervalId = null;
+  }
+
+  clearCueTimersDisplay();
 }
 
 function setCurrentStage(stage) {
@@ -720,9 +801,11 @@ function setCurrentStage(stage) {
     button.setAttribute("aria-pressed", String(isActive));
   });
 
-  dom.stageStates.forEach((node) => {
-    node.textContent = node.dataset.stageState === stage ? "Active" : "Ready";
-  });
+  if (stage) {
+    startActiveCueTimer();
+  } else {
+    stopActiveCueTimer();
+  }
 }
 
 function setLoopMeterProgress(id, progress) {
@@ -886,7 +969,7 @@ function queueBufferLoad() {
 
 async function preloadAudio() {
   setControlsBusy(true);
-  setAllStageStates("Loading");
+  clearCueTimersDisplay();
   resetPreloadProgress();
   setStatus("Preloading audio files...");
 
@@ -900,7 +983,7 @@ async function preloadAudio() {
     setStatus("Audio ready. Tap a stage.");
   } catch (error) {
     console.error(error);
-    setAllStageStates("Retry");
+    clearCueTimersDisplay();
     setStatus(error.message || "Audio preload failed. Tap a stage to retry.");
   } finally {
     if (AudioContextClass) {

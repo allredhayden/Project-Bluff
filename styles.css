@@ -333,16 +333,24 @@ body.loop-progress-enabled .stage-button {
   stroke-width: 1.7;
 }
 
-.stage-state {
-  flex: 0 0 auto;
+.stage-timer {
+  justify-self: end;
+  min-width: 5ch;
   color: var(--pg-text-dim);
   font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
-  font-size: 0.68rem;
+  font-size: 1.55rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
   line-height: 1;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-align: right;
 }
 
-.stage-button[aria-pressed="true"] .stage-state,
+.stage-timer:empty {
+  visibility: hidden;
+}
+
+.stage-button[aria-pressed="true"] .stage-timer,
 .stage-button[aria-pressed="true"] .stage-name,
 .stage-button[aria-pressed="true"] .stage-icon {
   color: var(--pg-orange-strong);
@@ -561,9 +569,16 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
 
 .track-volume-control {
   min-height: 56px;
+  grid-template-columns: 126px minmax(0, 1fr) 42px;
   border: 1px solid var(--pg-border);
   background: var(--pg-surface);
   padding: 8px;
+}
+
+.track-volume-control .volume-control-label {
+  min-width: 0;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .murder-confirmation-modal {
