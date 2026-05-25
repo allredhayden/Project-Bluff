@@ -59,26 +59,54 @@
           </span>
         </button>
 
-        <button class="stage-button" type="button" data-stage="day" aria-pressed="false">
-          <span class="stage-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <circle cx="12" cy="12" r="4"></circle>
-              <path d="M12 2v3"></path>
-              <path d="M12 19v3"></path>
-              <path d="m4.93 4.93 2.12 2.12"></path>
-              <path d="m16.95 16.95 2.12 2.12"></path>
-              <path d="M2 12h3"></path>
-              <path d="M19 12h3"></path>
-              <path d="m4.93 19.07 2.12-2.12"></path>
-              <path d="m16.95 7.05 2.12-2.12"></path>
-            </svg>
-          </span>
-          <span class="stage-name">DAY</span>
-          <span class="stage-state" data-stage-state="day">Loading</span>
-          <span class="stage-loop-meter" data-loop-meter="day" aria-hidden="true">
-            <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
-          </span>
-        </button>
+        <div class="day-cue-group">
+          <button class="stage-button" type="button" data-stage="day" aria-pressed="false">
+            <span class="stage-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path d="M12 2v3"></path>
+                <path d="M12 19v3"></path>
+                <path d="m4.93 4.93 2.12 2.12"></path>
+                <path d="m16.95 16.95 2.12 2.12"></path>
+                <path d="M2 12h3"></path>
+                <path d="M19 12h3"></path>
+                <path d="m4.93 19.07 2.12-2.12"></path>
+                <path d="m16.95 7.05 2.12-2.12"></path>
+              </svg>
+            </span>
+            <span class="stage-name">DAY</span>
+            <span class="stage-state" data-stage-state="day">Loading</span>
+            <span class="stage-loop-meter" data-loop-meter="day" aria-hidden="true">
+              <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
+            </span>
+          </button>
+          <div class="murder-sound-controls" role="group" aria-label="Murder night sounds">
+            <button
+              class="murder-sound-button"
+              type="button"
+              data-murder-sound="maleScream"
+              aria-pressed="false"
+            >
+              Male
+            </button>
+            <button
+              class="murder-sound-button"
+              type="button"
+              data-murder-sound="femaleScream"
+              aria-pressed="false"
+            >
+              Female
+            </button>
+            <button
+              class="murder-sound-button"
+              type="button"
+              data-murder-sound="crows"
+              aria-pressed="false"
+            >
+              Crows
+            </button>
+          </div>
+        </div>
 
         <button class="stage-button" type="button" data-stage="nominations" aria-pressed="false">
           <span class="stage-icon stage-icon-nominations" aria-hidden="true">
@@ -154,6 +182,34 @@
           <span class="settings-checkbox-label">Show Loop Progress</span>
         </label>
         <div class="settings-track-list" data-track-volume-list></div>
+      </div>
+    </section>
+
+    <section
+      class="murder-confirmation-modal"
+      data-murder-confirmation-modal
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="murder-confirmation-title"
+      hidden
+    >
+      <div class="murder-confirmation-sheet">
+        <h2 id="murder-confirmation-title">Confirm Screams</h2>
+        <p>Both scream buttons are armed. Choose what plays with DAY.</p>
+        <div class="murder-confirmation-actions">
+          <button class="murder-confirmation-button primary" type="button" data-murder-confirmation-choice="both">
+            Play Both
+          </button>
+          <button class="murder-confirmation-button" type="button" data-murder-confirmation-choice="male">
+            Just Male
+          </button>
+          <button class="murder-confirmation-button" type="button" data-murder-confirmation-choice="female">
+            Just Female
+          </button>
+          <button class="murder-confirmation-button cancel" type="button" data-murder-confirmation-choice="cancel">
+            Cancel
+          </button>
+        </div>
       </div>
     </section>
   </body>

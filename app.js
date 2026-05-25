@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v8";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v9";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -29,6 +29,21 @@ const SOUND_FILES = {
     label: "Day Loop",
     path: "sounds/BotC Day Loop.mp3",
     bytes: 45254947,
+  },
+  crows: {
+    label: "Crows",
+    path: "sounds/BotC Crows.mp3",
+    bytes: 585142,
+  },
+  maleScream: {
+    label: "Male Scream",
+    path: "sounds/BotC Male Scream.wav",
+    bytes: 1686192,
+  },
+  femaleScream: {
+    label: "Female Scream",
+    path: "sounds/BotC Female Scream.wav",
+    bytes: 1686192,
   },
   nightIntro: {
     label: "Night Intro",
@@ -94,6 +109,18 @@ const ONE_SHOTS = {
     file: "nightIntro",
     offset: 1.347,
   },
+  crows: {
+    file: "crows",
+    offset: 0,
+  },
+  maleScream: {
+    file: "maleScream",
+    offset: 0,
+  },
+  femaleScream: {
+    file: "femaleScream",
+    offset: 0,
+  },
 };
 
 const FADE = {
@@ -117,6 +144,9 @@ const dom = {
   trackVolumeList: document.querySelector("[data-track-volume-list]"),
   loopProgressToggle: document.querySelector("[data-loop-progress-toggle]"),
   loopMeters: Array.from(document.querySelectorAll("[data-loop-meter]")),
+  murderSoundButtons: Array.from(document.querySelectorAll("[data-murder-sound]")),
+  murderConfirmationModal: document.querySelector("[data-murder-confirmation-modal]"),
+  murderConfirmationChoices: Array.from(document.querySelectorAll("[data-murder-confirmation-choice]")),
 };
 
 const loopMeterFills = new Map(
@@ -152,7 +182,15 @@ const preloadProgress = {
 };
 
 let focusedBeforeSettings = null;
+let focusedBeforeMurderConfirmation = null;
 let loopProgressFrameId = null;
+let pendingMurderConfirmation = null;
+
+const murderSoundState = {
+  crows: false,
+  maleScream: false,
+  femaleScream: false,
+};
 
 function getDefaultTrackVolume(fileKey) {
   return fileKey === "day" || fileKey === "setupLoop" ? 0.5 : 1;
@@ -409,6 +447,185 @@ function closeSettings() {
   }
 }
 
+function setMurderSoundButtonStates() {
+  dom.murderSoundButtons.forEach((button) => {
+    const soundId = button.dataset.murderSound;
+    button.setAttribute("aria-pressed", String(murderSoundState[soundId] === true));
+  });
+}
+
+function resetMurderSounds() {
+  murderSoundState.crows = false;
+  murderSoundState.maleScream = false;
+  murderSoundState.femaleScream = false;
+  setMurderSoundButtonStates();
+}
+
+function toggleMurderSound(soundId) {
+  if (controlsBusy) {
+    return;
+  }
+
+  if (soundId === "crows") {
+    if (murderSoundState.crows) {
+      resetMurderSounds();
+      setStatus("Murder sounds cleared.");
+    } else {
+      setStatus("Choose a scream to arm crows.");
+    }
+
+    return;
+  }
+
+  if (soundId !== "maleScream" && soundId !== "femaleScream") {
+    return;
+  }
+
+  murderSoundState[soundId] = !murderSoundState[soundId];
+
+  if (murderSoundState.maleScream || murderSoundState.femaleScream) {
+    murderSoundState.crows = true;
+  } else {
+    murderSoundState.crows = false;
+  }
+
+  setMurderSoundButtonStates();
+}
+
+function getArmedMurderCue() {
+  const maleScream = murderSoundState.maleScream === true;
+  const femaleScream = murderSoundState.femaleScream === true;
+
+  if (!maleScream && !femaleScream) {
+    return null;
+  }
+
+  return {
+    crows: true,
+    maleScream,
+    femaleScream,
+  };
+}
+
+function getMurderCueFromConfirmation(choice) {
+  if (choice === "both") {
+    return {
+      crows: true,
+      maleScream: true,
+      femaleScream: true,
+    };
+  }
+
+  if (choice === "male") {
+    return {
+      crows: true,
+      maleScream: true,
+      femaleScream: false,
+    };
+  }
+
+  if (choice === "female") {
+    return {
+      crows: true,
+      maleScream: false,
+      femaleScream: true,
+    };
+  }
+
+  return false;
+}
+
+function closeMurderConfirmation(choice) {
+  if (!pendingMurderConfirmation) {
+    return;
+  }
+
+  const resolve = pendingMurderConfirmation;
+  pendingMurderConfirmation = null;
+  dom.murderConfirmationModal.hidden = true;
+  document.body.classList.remove("murder-confirmation-open");
+
+  if (
+    focusedBeforeMurderConfirmation
+    && typeof focusedBeforeMurderConfirmation.focus === "function"
+  ) {
+    focusedBeforeMurderConfirmation.focus();
+  }
+
+  resolve(choice);
+}
+
+function showMurderConfirmation() {
+  focusedBeforeMurderConfirmation = document.activeElement;
+  dom.murderConfirmationModal.hidden = false;
+  document.body.classList.add("murder-confirmation-open");
+
+  const primaryChoice = dom.murderConfirmationChoices.find(
+    (button) => button.dataset.murderConfirmationChoice === "both",
+  );
+
+  if (primaryChoice) {
+    primaryChoice.focus();
+  }
+
+  return new Promise((resolve) => {
+    pendingMurderConfirmation = resolve;
+  });
+}
+
+async function resolveMurderCueForStage(stage) {
+  if (stage !== "day") {
+    return null;
+  }
+
+  const armedCue = getArmedMurderCue();
+
+  if (!armedCue) {
+    return null;
+  }
+
+  if (armedCue.maleScream && armedCue.femaleScream) {
+    const choice = await showMurderConfirmation();
+    return getMurderCueFromConfirmation(choice);
+  }
+
+  return armedCue;
+}
+
+function playMurderCue(murderCue) {
+  if (!murderCue) {
+    return;
+  }
+
+  if (murderCue.crows) {
+    playOneShot("crows");
+  }
+
+  if (murderCue.maleScream) {
+    playOneShot("maleScream");
+  }
+
+  if (murderCue.femaleScream) {
+    playOneShot("femaleScream");
+  }
+}
+
+function initializeMurderSoundUi() {
+  setMurderSoundButtonStates();
+
+  dom.murderSoundButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleMurderSound(button.dataset.murderSound);
+    });
+  });
+
+  dom.murderConfirmationChoices.forEach((button) => {
+    button.addEventListener("click", () => {
+      closeMurderConfirmation(button.dataset.murderConfirmationChoice);
+    });
+  });
+}
+
 function initializeVolumeUi() {
   setMasterVolume(volumeSettings.master, false);
   setLoopProgressEnabled(volumeSettings.showLoopProgress, false);
@@ -428,7 +645,16 @@ function initializeVolumeUi() {
   dom.settingsClose.addEventListener("click", closeSettings);
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !dom.settingsModal.hidden) {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    if (!dom.murderConfirmationModal.hidden) {
+      closeMurderConfirmation("cancel");
+      return;
+    }
+
+    if (!dom.settingsModal.hidden) {
       closeSettings();
     }
   });
@@ -472,6 +698,9 @@ function resetPreloadProgress() {
 function setControlsBusy(isBusy) {
   controlsBusy = isBusy;
   dom.stageButtons.forEach((button) => {
+    button.disabled = isBusy;
+  });
+  dom.murderSoundButtons.forEach((button) => {
     button.disabled = isBusy;
   });
 }
@@ -1076,10 +1305,15 @@ function beginCue(stage) {
   return currentCueId;
 }
 
-function runDayCue() {
+function runDayCue(murderCue = null) {
   const cueId = beginCue("day");
 
   playOneShot("bells");
+  playMurderCue(murderCue);
+  if (murderCue) {
+    resetMurderSounds();
+  }
+
   fadeOutOtherLoops(["day", "night"]);
 
   scheduleCueTask(cueId, 1, () => {
@@ -1126,14 +1360,14 @@ function runNightCue() {
   setStatus("NIGHT active.");
 }
 
-function runStageCue(stage) {
+function runStageCue(stage, murderCue = null) {
   if (stage === "setup") {
     runSetupCue();
     return;
   }
 
   if (stage === "day") {
-    runDayCue();
+    runDayCue(murderCue);
     return;
   }
 
@@ -1155,12 +1389,19 @@ async function handleStageTap(stage) {
     return;
   }
 
+  const murderCue = await resolveMurderCueForStage(stage);
+
+  if (murderCue === false) {
+    setStatus("DAY cue canceled.");
+    return;
+  }
+
   setControlsBusy(true);
   setStatus(loadPromise ? "Starting cue..." : "Loading audio files...");
 
   try {
     await ensureAudioReady();
-    runStageCue(stage);
+    runStageCue(stage, murderCue);
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Audio could not be started.");
@@ -1199,6 +1440,7 @@ async function stopAll() {
   }
 }
 
+initializeMurderSoundUi();
 initializeVolumeUi();
 
 dom.stageButtons.forEach((button) => {

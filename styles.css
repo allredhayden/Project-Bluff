@@ -46,7 +46,8 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-body.settings-open {
+body.settings-open,
+body.murder-confirmation-open {
   overflow: hidden;
 }
 
@@ -237,6 +238,11 @@ h1 {
   align-content: center;
 }
 
+.day-cue-group {
+  display: grid;
+  gap: 4px;
+}
+
 .stage-button {
   position: relative;
   width: 100%;
@@ -268,7 +274,9 @@ body.loop-progress-enabled .stage-button {
 .stage-button:focus-visible,
 .stop-button:focus-visible,
 .settings-button:focus-visible,
-.settings-close-button:focus-visible {
+.settings-close-button:focus-visible,
+.murder-sound-button:focus-visible,
+.murder-confirmation-button:focus-visible {
   outline: 1px solid var(--pg-orange);
   outline-offset: 2px;
   border-color: var(--pg-orange-border);
@@ -364,6 +372,45 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   transform: scaleX(0);
   transform-origin: left center;
   will-change: transform;
+}
+
+.murder-sound-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.murder-sound-button {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--pg-border);
+  border-radius: 0;
+  background: var(--pg-surface-inset);
+  color: var(--pg-text-dim);
+  cursor: pointer;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.murder-sound-button:active {
+  background: var(--pg-surface-strong);
+}
+
+.murder-sound-button[aria-pressed="true"] {
+  border-color: var(--pg-danger-border);
+  background: var(--pg-danger-soft);
+  color: var(--pg-text);
+  box-shadow: inset 0 -3px 0 var(--pg-danger);
+}
+
+.murder-sound-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .transport {
@@ -517,6 +564,84 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   border: 1px solid var(--pg-border);
   background: var(--pg-surface);
   padding: 8px;
+}
+
+.murder-confirmation-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background: rgb(5 5 5 / 0.9);
+  padding: max(10px, env(safe-area-inset-top)) 8px max(10px, env(safe-area-inset-bottom));
+}
+
+.murder-confirmation-modal[hidden] {
+  display: none;
+}
+
+.murder-confirmation-sheet {
+  width: min(100%, 420px);
+  border: 1px solid var(--pg-border-strong);
+  background: var(--pg-rail);
+  padding: 10px;
+  box-shadow: 0 16px 44px rgb(0 0 0 / 0.45);
+}
+
+.murder-confirmation-sheet h2 {
+  margin: 0 0 6px;
+  color: var(--pg-text);
+  font-size: 1rem;
+  line-height: 1.05;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.murder-confirmation-sheet p {
+  margin: 0 0 10px;
+  color: var(--pg-text-muted);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.74rem;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.murder-confirmation-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.murder-confirmation-button {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: 0;
+  background: var(--pg-surface);
+  color: var(--pg-text-muted);
+  cursor: pointer;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.murder-confirmation-button:active {
+  background: var(--pg-surface-strong);
+}
+
+.murder-confirmation-button.primary {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+}
+
+.murder-confirmation-button.cancel {
+  border-color: var(--pg-border);
+  color: var(--pg-text-dim);
 }
 
 @media (min-width: 700px) {
