@@ -5,7 +5,7 @@ Static mobile web app for running soundtrack cues for Blood on the Clocktower.
 Current stage cues:
 
 - `SETUP`: starts `BotC Setup Loop.mp3` from the beginning, then loops from `00:28.369` to the end of the file.
-- `DAY`: plays bells, fades Night out, and fades Day in.
+- `DAY`: plays bells when the Bells toggle is on, fades Night out, and fades Day in.
 - `NOMINATIONS`: plays the gong immediately, fades current music out over 3 seconds, then starts the Nominations loop after 2 seconds.
 - `NIGHT`: fades Nominations out, plays the Night intro, and starts the Night loop.
 

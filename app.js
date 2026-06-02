@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v9";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v10";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -29,11 +29,6 @@ const SOUND_FILES = {
     label: "Day Loop",
     path: "sounds/BotC Day Loop.mp3",
     bytes: 45254947,
-  },
-  crows: {
-    label: "Crows",
-    path: "sounds/BotC Crows.mp3",
-    bytes: 585142,
   },
   maleScream: {
     label: "Male Scream",
@@ -123,10 +118,6 @@ const ONE_SHOTS = {
     file: "nightIntro",
     offset: 1.347,
   },
-  crows: {
-    file: "crows",
-    offset: 0,
-  },
   maleScream: {
     file: "maleScream",
     offset: 0,
@@ -158,7 +149,7 @@ const dom = {
   trackVolumeList: document.querySelector("[data-track-volume-list]"),
   loopProgressToggle: document.querySelector("[data-loop-progress-toggle]"),
   loopMeters: Array.from(document.querySelectorAll("[data-loop-meter]")),
-  murderSoundButtons: Array.from(document.querySelectorAll("[data-murder-sound]")),
+  daySoundButtons: Array.from(document.querySelectorAll("[data-murder-sound], [data-day-sound]")),
   murderConfirmationModal: document.querySelector("[data-murder-confirmation-modal]"),
   murderConfirmationChoices: Array.from(document.querySelectorAll("[data-murder-confirmation-choice]")),
 };
@@ -202,8 +193,8 @@ let focusedBeforeMurderConfirmation = null;
 let loopProgressFrameId = null;
 let pendingMurderConfirmation = null;
 
-const murderSoundState = {
-  crows: false,
+const daySoundState = {
+  bells: true,
   maleScream: false,
   femaleScream: false,
 };
@@ -479,33 +470,32 @@ function closeSettings() {
   }
 }
 
-function setMurderSoundButtonStates() {
-  dom.murderSoundButtons.forEach((button) => {
-    const soundId = button.dataset.murderSound;
-    button.setAttribute("aria-pressed", String(murderSoundState[soundId] === true));
+function getDaySoundButtonId(button) {
+  return button.dataset.daySound || button.dataset.murderSound;
+}
+
+function setDaySoundButtonStates() {
+  dom.daySoundButtons.forEach((button) => {
+    const soundId = getDaySoundButtonId(button);
+    button.setAttribute("aria-pressed", String(daySoundState[soundId] === true));
   });
 }
 
-function resetMurderSounds() {
-  murderSoundState.crows = false;
-  murderSoundState.maleScream = false;
-  murderSoundState.femaleScream = false;
-  setMurderSoundButtonStates();
+function resetArmedScreams() {
+  daySoundState.maleScream = false;
+  daySoundState.femaleScream = false;
+  setDaySoundButtonStates();
 }
 
-function toggleMurderSound(soundId) {
+function toggleDaySound(soundId) {
   if (controlsBusy) {
     return;
   }
 
-  if (soundId === "crows") {
-    if (murderSoundState.crows) {
-      resetMurderSounds();
-      setStatus("Murder sounds cleared.");
-    } else {
-      setStatus("Choose a scream to arm crows.");
-    }
-
+  if (soundId === "bells") {
+    daySoundState.bells = !daySoundState.bells;
+    setDaySoundButtonStates();
+    setStatus(daySoundState.bells ? "DAY bells armed." : "DAY bells off.");
     return;
   }
 
@@ -513,27 +503,19 @@ function toggleMurderSound(soundId) {
     return;
   }
 
-  murderSoundState[soundId] = !murderSoundState[soundId];
-
-  if (murderSoundState.maleScream || murderSoundState.femaleScream) {
-    murderSoundState.crows = true;
-  } else {
-    murderSoundState.crows = false;
-  }
-
-  setMurderSoundButtonStates();
+  daySoundState[soundId] = !daySoundState[soundId];
+  setDaySoundButtonStates();
 }
 
 function getArmedMurderCue() {
-  const maleScream = murderSoundState.maleScream === true;
-  const femaleScream = murderSoundState.femaleScream === true;
+  const maleScream = daySoundState.maleScream === true;
+  const femaleScream = daySoundState.femaleScream === true;
 
   if (!maleScream && !femaleScream) {
     return null;
   }
 
   return {
-    crows: true,
     maleScream,
     femaleScream,
   };
@@ -542,7 +524,6 @@ function getArmedMurderCue() {
 function getMurderCueFromConfirmation(choice) {
   if (choice === "both") {
     return {
-      crows: true,
       maleScream: true,
       femaleScream: true,
     };
@@ -550,7 +531,6 @@ function getMurderCueFromConfirmation(choice) {
 
   if (choice === "male") {
     return {
-      crows: true,
       maleScream: true,
       femaleScream: false,
     };
@@ -558,7 +538,6 @@ function getMurderCueFromConfirmation(choice) {
 
   if (choice === "female") {
     return {
-      crows: true,
       maleScream: false,
       femaleScream: true,
     };
@@ -629,10 +608,6 @@ function playMurderCue(murderCue) {
     return;
   }
 
-  if (murderCue.crows) {
-    playOneShot("crows");
-  }
-
   if (murderCue.maleScream) {
     playOneShot("maleScream");
   }
@@ -643,11 +618,11 @@ function playMurderCue(murderCue) {
 }
 
 function initializeMurderSoundUi() {
-  setMurderSoundButtonStates();
+  setDaySoundButtonStates();
 
-  dom.murderSoundButtons.forEach((button) => {
+  dom.daySoundButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      toggleMurderSound(button.dataset.murderSound);
+      toggleDaySound(getDaySoundButtonId(button));
     });
   });
 
@@ -732,7 +707,7 @@ function setControlsBusy(isBusy) {
   dom.stageButtons.forEach((button) => {
     button.disabled = isBusy;
   });
-  dom.murderSoundButtons.forEach((button) => {
+  dom.daySoundButtons.forEach((button) => {
     button.disabled = isBusy;
   });
 }
@@ -1391,10 +1366,13 @@ function beginCue(stage) {
 function runDayCue(murderCue = null) {
   const cueId = beginCue("day");
 
-  playOneShot("bells");
+  if (daySoundState.bells) {
+    playOneShot("bells");
+  }
+
   playMurderCue(murderCue);
   if (murderCue) {
-    resetMurderSounds();
+    resetArmedScreams();
   }
 
   fadeOutOtherLoops(["day", "night"]);
