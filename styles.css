@@ -276,7 +276,17 @@ body.loop-progress-enabled .stage-button {
 .settings-button:focus-visible,
 .settings-close-button:focus-visible,
 .murder-sound-button:focus-visible,
-.murder-confirmation-button:focus-visible {
+.murder-confirmation-button:focus-visible,
+.lighting-input:focus-visible,
+.lighting-arm-button:focus-visible,
+.lighting-disarm-button:focus-visible,
+.lighting-add-button:focus-visible,
+.lighting-remove-button:focus-visible,
+.lighting-clear-button:focus-visible,
+.lighting-trigger-tab:focus-visible,
+.lighting-preview-button:focus-visible,
+.lighting-save-button:focus-visible,
+.lighting-fade-toggle:focus-visible {
   outline: 1px solid var(--pg-orange);
   outline-offset: 2px;
   border-color: var(--pg-orange-border);
@@ -497,6 +507,7 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 
 .settings-header {
@@ -508,6 +519,9 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   gap: 8px;
   background: var(--pg-rail);
   padding: 7px 8px;
+  position: sticky;
+  top: max(0px, env(safe-area-inset-top));
+  z-index: 2;
 }
 
 .settings-header h2 {
@@ -562,6 +576,32 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   color: var(--pg-loop);
 }
 
+.settings-section {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-section-title,
+.settings-subsection-title {
+  margin: 0;
+  color: var(--pg-text-muted);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.72rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-section-title {
+  border: 1px solid var(--pg-border);
+  background: var(--pg-rail);
+  padding: 8px;
+}
+
+.settings-subsection-title {
+  color: var(--pg-orange-strong);
+}
+
 .settings-track-list {
   display: grid;
   gap: 6px;
@@ -579,6 +619,491 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   min-width: 0;
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.lighting-status,
+.lighting-helper,
+.lighting-empty,
+.lighting-error-summary,
+.lighting-field-label,
+.lighting-parameter-label,
+.lighting-fade-label {
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+}
+
+.lighting-status {
+  min-height: 31px;
+  margin: 0;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface-inset);
+  color: var(--pg-text-dim);
+  padding: 8px;
+  font-size: 0.7rem;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.lighting-status[data-tone="success"] {
+  border-color: var(--pg-live-border);
+  background: var(--pg-live-soft);
+  color: var(--pg-live);
+}
+
+.lighting-status[data-tone="warning"] {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+}
+
+.lighting-status[data-tone="error"] {
+  border-color: var(--pg-danger-border);
+  background: var(--pg-danger-soft);
+  color: var(--pg-danger);
+}
+
+.lighting-fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.lighting-fieldset:disabled {
+  opacity: 0.52;
+}
+
+.lighting-arm-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.lighting-arm-button,
+.lighting-disarm-button,
+.lighting-add-button,
+.lighting-remove-button,
+.lighting-clear-button,
+.lighting-trigger-tab,
+.lighting-preview-button,
+.lighting-save-button {
+  min-height: 42px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: 0;
+  background: var(--pg-surface);
+  color: var(--pg-text-muted);
+  cursor: pointer;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.lighting-arm-button {
+  border-color: var(--pg-live-border);
+  background: var(--pg-live-soft);
+  color: var(--pg-live);
+}
+
+.lighting-disarm-button,
+.lighting-remove-button,
+.lighting-clear-button {
+  border-color: var(--pg-danger-border);
+  background: var(--pg-danger-soft);
+  color: var(--pg-danger);
+}
+
+.lighting-arm-button:disabled,
+.lighting-disarm-button:disabled,
+.lighting-add-button:disabled,
+.lighting-remove-button:disabled,
+.lighting-clear-button:disabled,
+.lighting-trigger-tab:disabled,
+.lighting-mode-button:disabled,
+.lighting-save-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.lighting-network-panel {
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface-inset);
+}
+
+.lighting-network-panel summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--pg-text-muted);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 8px;
+}
+
+.lighting-network-panel[open] summary {
+  border-bottom: 1px solid var(--pg-border);
+  color: var(--pg-orange-strong);
+}
+
+.lighting-network-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+}
+
+.lighting-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+  padding: 8px;
+}
+
+.lighting-field-label {
+  color: var(--pg-text-muted);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lighting-optional {
+  color: var(--pg-text-dim);
+  font-weight: 400;
+}
+
+.lighting-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: 0;
+  background: var(--pg-surface-inset);
+  color: var(--pg-text);
+  padding: 8px;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.lighting-input:disabled {
+  color: var(--pg-text-disabled);
+}
+
+.lighting-input.lighting-invalid {
+  border-color: var(--pg-danger);
+  background: var(--pg-danger-soft);
+}
+
+.lighting-helper,
+.lighting-empty {
+  margin: 0;
+  color: var(--pg-text-dim);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.lighting-helper,
+.lighting-empty {
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface-inset);
+  padding: 8px;
+}
+
+.lighting-network-panel > .lighting-helper {
+  margin: 0 6px 6px;
+}
+
+.lighting-editor-section,
+.lighting-fixture-list,
+.lighting-cue-fixtures {
+  display: grid;
+  gap: 6px;
+}
+
+.lighting-editor-section {
+  border-top: 1px solid var(--pg-border-strong);
+  margin-top: 2px;
+  padding-top: 10px;
+}
+
+.lighting-editor-section[hidden] {
+  display: none;
+}
+
+.lighting-section-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.lighting-add-button {
+  min-height: 36px;
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+  padding: 0 10px;
+}
+
+.lighting-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(62px, 1fr));
+  gap: 3px;
+}
+
+.lighting-mode-button {
+  min-height: 36px;
+  border-color: var(--pg-border-strong);
+  background: var(--pg-surface-inset);
+  color: var(--pg-text-dim);
+  padding: 0 9px;
+}
+
+.lighting-mode-button.is-live[aria-pressed="true"] {
+  border-color: var(--pg-live-border);
+  background: var(--pg-live-soft);
+  color: var(--pg-live);
+  box-shadow: inset 0 -3px 0 var(--pg-live);
+}
+
+.lighting-mode-button.is-blind[aria-pressed="true"] {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+  box-shadow: inset 0 -3px 0 var(--pg-orange);
+}
+
+.lighting-mode-status {
+  margin: 0;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface-inset);
+  color: var(--pg-text-dim);
+  padding: 7px 8px;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.03em;
+}
+
+.lighting-mode-status[data-mode="live"] {
+  border-left-color: var(--pg-live);
+  color: var(--pg-live);
+}
+
+.lighting-mode-status[data-mode="blind"] {
+  border-left-color: var(--pg-orange);
+  color: var(--pg-orange-strong);
+}
+
+.lighting-fixture-card,
+.lighting-cue-fixture {
+  min-width: 0;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+}
+
+.lighting-cue-profile-group {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-surface-strong);
+  box-shadow: inset 3px 0 0 var(--pg-orange);
+}
+
+.lighting-cue-profile-group .lighting-cue-fixture-title {
+  color: var(--pg-orange-strong);
+}
+
+.lighting-parameter-input::placeholder {
+  color: var(--pg-text-dim);
+  opacity: 1;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.lighting-fixture-card-header,
+.lighting-cue-fixture-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.lighting-cue-fixture-header.has-action {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.lighting-fixture-card-title,
+.lighting-cue-fixture-title {
+  margin: 0;
+  min-width: 0;
+  color: var(--pg-text);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.76rem;
+  line-height: 1.15;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.lighting-remove-button,
+.lighting-clear-button {
+  min-height: 34px;
+  padding: 0 9px;
+}
+
+.lighting-clear-button {
+  min-width: 54px;
+}
+
+.lighting-fixture-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 82px 82px;
+  gap: 6px;
+}
+
+.lighting-trigger-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.lighting-trigger-tab {
+  min-width: 0;
+  min-height: 38px;
+  padding: 4px;
+  font-size: 0.61rem;
+  overflow-wrap: anywhere;
+}
+
+.lighting-trigger-tab[aria-selected="true"] {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+  box-shadow: inset 0 -3px 0 var(--pg-orange);
+}
+
+.lighting-trigger-tab[data-game-active="true"] {
+  border-left-color: var(--pg-live);
+  box-shadow: inset 3px 0 0 var(--pg-live);
+}
+
+.lighting-trigger-tab[aria-selected="true"][data-game-active="true"] {
+  box-shadow: inset 3px 0 0 var(--pg-live), inset 0 -3px 0 var(--pg-orange);
+}
+
+.lighting-fade-input-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--pg-text-dim);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.lighting-parameter-grid {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) 82px 74px;
+  gap: 3px 6px;
+  align-items: center;
+}
+
+.lighting-parameter-header {
+  color: var(--pg-text-dim);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+}
+
+.lighting-parameter-label {
+  color: var(--pg-text-muted);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.lighting-parameter-input {
+  min-height: 36px;
+  padding: 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lighting-fade-label {
+  min-height: 36px;
+  border: 1px solid var(--pg-border);
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  color: var(--pg-text-dim);
+  font-size: 0.61rem;
+  text-transform: uppercase;
+}
+
+.lighting-fade-toggle {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 0;
+  accent-color: var(--pg-orange);
+}
+
+.lighting-fade-label:has(.lighting-fade-toggle:checked) {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+}
+
+.lighting-fade-label.is-snap-only {
+  display: flex;
+  justify-content: center;
+  color: var(--pg-text-dim);
+}
+
+.lighting-save-button {
+  width: 100%;
+  min-height: 46px;
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange);
+  color: var(--pg-bg);
+}
+
+.lighting-error-summary {
+  min-height: 0;
+  margin: 0;
+  color: var(--pg-danger);
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  line-height: 1.3;
+}
+
+.lighting-error-summary:empty {
+  display: none;
+}
+
+@media (max-width: 430px) {
+  .lighting-fixture-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lighting-trigger-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .murder-confirmation-modal {

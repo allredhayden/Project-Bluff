@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v10";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v17";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -459,6 +459,10 @@ function openSettings() {
   dom.settingsModal.hidden = false;
   document.body.classList.add("settings-open");
   dom.settingsClose.focus();
+
+  if (window.ProjectBluffLighting) {
+    window.ProjectBluffLighting.onSettingsOpened();
+  }
 }
 
 function closeSettings() {
@@ -747,8 +751,12 @@ function updateCueTimersDisplay() {
   });
 }
 
-function startActiveCueTimer() {
-  activeCueStartedAt = performance.now();
+function startActiveCueTimer(startedAt = null) {
+  const serverStartTime = startedAt ? Date.parse(startedAt) : NaN;
+  const elapsedBeforeThisPage = Number.isFinite(serverStartTime)
+    ? Math.max(0, Date.now() - serverStartTime)
+    : 0;
+  activeCueStartedAt = performance.now() - elapsedBeforeThisPage;
   updateCueTimersDisplay();
 
   if (activeCueTimerIntervalId === null) {
@@ -767,7 +775,7 @@ function stopActiveCueTimer() {
   clearCueTimersDisplay();
 }
 
-function setCurrentStage(stage) {
+function setCurrentStage(stage, startedAt = null) {
   currentStage = stage;
   dom.activeStage.textContent = stage ? STAGES[stage] : "Idle";
 
@@ -777,7 +785,7 @@ function setCurrentStage(stage) {
   });
 
   if (stage) {
-    startActiveCueTimer();
+    startActiveCueTimer(startedAt);
   } else {
     stopActiveCueTimer();
   }
@@ -952,10 +960,12 @@ async function preloadAudio() {
     configurePlaybackSession();
     makeAudioContext();
     await queueBufferLoad();
-    setCurrentStage(null);
+    if (currentStage === null) {
+      setCurrentStage(null);
+    }
     setPreloadProgress(100);
     setPreloadProgressVisible(false);
-    setStatus("Audio ready. Tap a stage.");
+    setStatus(currentStage ? `${STAGES[currentStage]} active.` : "Audio ready. Tap a stage.");
   } catch (error) {
     console.error(error);
     clearCueTimersDisplay();
@@ -1440,6 +1450,34 @@ function runStageCue(stage, murderCue = null) {
   runNightCue();
 }
 
+function dispatchLightingTrigger(trigger) {
+  if (!window.ProjectBluffLighting) {
+    return;
+  }
+  window.ProjectBluffLighting.dispatchTrigger(trigger);
+}
+
+function applySharedControlState(state) {
+  const stage = state && state.currentStage;
+  if (stage !== null && !Object.hasOwn(STAGES, stage)) {
+    return;
+  }
+  if (stage === currentStage) {
+    return;
+  }
+
+  currentCueId += 1;
+  clearCueTimers();
+  setCurrentStage(stage, state.startedAt);
+  setMediaPlaybackState(stage ? "playing" : "none");
+  if (stage) {
+    enableStopButton();
+    setStatus(`${STAGES[stage]} active on another controller.`);
+  } else {
+    setStatus("Stopped on another controller.");
+  }
+}
+
 async function handleStageTap(stage) {
   if (controlsBusy) {
     return;
@@ -1463,6 +1501,7 @@ async function handleStageTap(stage) {
   try {
     await ensureAudioReady();
     runStageCue(stage, murderCue);
+    dispatchLightingTrigger(stage);
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Audio could not be started.");
@@ -1490,6 +1529,7 @@ async function stopAll() {
     setCurrentStage(null);
     setMediaPlaybackState("none");
     setStatus("Stopping.");
+    dispatchLightingTrigger("stopAll");
 
     window.setTimeout(() => {
       if (!currentStage) {
@@ -1503,6 +1543,10 @@ async function stopAll() {
 
 initializeMurderSoundUi();
 initializeVolumeUi();
+
+if (window.ProjectBluffLighting) {
+  window.ProjectBluffLighting.initialize({ onControlState: applySharedControlState });
+}
 
 dom.stageButtons.forEach((button) => {
   button.addEventListener("click", () => {

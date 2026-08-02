@@ -1,8 +1,9 @@
-const CACHE_NAME = "botc-soundtrack-v10";
+const CACHE_NAME = "botc-soundtrack-v17";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
+  "./lighting-control.js",
   "./app.js",
   "./service-worker.js",
 ];
@@ -35,6 +36,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
   if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/")) {
     return;
   }
 

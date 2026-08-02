@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Blood on the Clocktower Soundtrack</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="lighting-control.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -15,7 +16,7 @@
           <h1 id="app-title">Soundtrack</h1>
         </div>
         <div class="stage-indicator" data-active-stage>Idle</div>
-        <button class="settings-button" type="button" data-settings-open aria-label="Open audio settings">
+        <button class="settings-button" type="button" data-settings-open aria-label="Open settings">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
             <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2 2 0 0 1-2.82 2.82l-.04-.04A1.8 1.8 0 0 0 14.96 19a1.8 1.8 0 0 0-1.08 1.64V20.8a2 2 0 0 1-4 0v-.06A1.8 1.8 0 0 0 8.8 19a1.8 1.8 0 0 0-1.98.36l-.04.04a2 2 0 0 1-2.82-2.82l.04-.04A1.8 1.8 0 0 0 4.36 15a1.8 1.8 0 0 0-1.64-1.08H2.6a2 2 0 0 1 0-4h.12A1.8 1.8 0 0 0 4.36 8a1.8 1.8 0 0 0-.36-1.98l-.04-.04A2 2 0 0 1 6.78 3.16l.04.04A1.8 1.8 0 0 0 8.8 3.56a1.8 1.8 0 0 0 1.08-1.64V1.8a2 2 0 0 1 4 0v.12a1.8 1.8 0 0 0 1.08 1.64 1.8 1.8 0 0 0 1.98-.36l.04-.04a2 2 0 0 1 2.82 2.82l-.04.04A1.8 1.8 0 0 0 19.4 8a1.8 1.8 0 0 0 1.64 1.08h.16a2 2 0 0 1 0 4h-.16A1.8 1.8 0 0 0 19.4 15Z"></path>
@@ -165,23 +166,123 @@
     >
       <div class="settings-sheet">
         <header class="settings-header">
-          <h2 id="settings-title">Audio Settings</h2>
-          <button class="settings-close-button" type="button" data-settings-close aria-label="Close audio settings">
+          <h2 id="settings-title">Settings</h2>
+          <button class="settings-close-button" type="button" data-settings-close aria-label="Close settings">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="m6 6 12 12"></path>
               <path d="M18 6 6 18"></path>
             </svg>
           </button>
         </header>
-        <label class="settings-checkbox-row">
-          <input
-            class="settings-checkbox"
-            type="checkbox"
-            data-loop-progress-toggle
-          >
-          <span class="settings-checkbox-label">Show Loop Progress</span>
-        </label>
-        <div class="settings-track-list" data-track-volume-list></div>
+        <section class="settings-section" aria-labelledby="audio-settings-title">
+          <h3 id="audio-settings-title" class="settings-section-title">Audio</h3>
+          <label class="settings-checkbox-row">
+            <input
+              class="settings-checkbox"
+              type="checkbox"
+              data-loop-progress-toggle
+            >
+            <span class="settings-checkbox-label">Show Loop Progress</span>
+          </label>
+          <div class="settings-track-list" data-track-volume-list></div>
+        </section>
+
+        <section class="settings-section lighting-section" aria-labelledby="lighting-title">
+          <h3 id="lighting-title" class="settings-section-title">Lighting</h3>
+          <p class="lighting-status" data-lighting-status data-tone="warning" role="status" aria-live="polite">
+            Checking for the local Bluff server...
+          </p>
+          <fieldset class="lighting-fieldset" data-lighting-fieldset disabled>
+            <div class="lighting-arm-actions" role="group" aria-label="Lighting output controls">
+              <button class="lighting-arm-button" type="button" data-lighting-arm>Arm Lighting</button>
+              <button class="lighting-disarm-button" type="button" data-lighting-disarm disabled>Disarm + Blackout</button>
+            </div>
+
+            <details class="lighting-network-panel">
+              <summary>Art-Net Output</summary>
+              <div class="lighting-network-grid">
+                <label class="lighting-field lighting-target-field">
+                  <span class="lighting-field-label">Target</span>
+                  <input
+                    class="lighting-input"
+                    type="text"
+                    value="255.255.255.255"
+                    autocapitalize="none"
+                    autocomplete="off"
+                    spellcheck="false"
+                    data-lighting-target
+                  >
+                </label>
+                <label class="lighting-field">
+                  <span class="lighting-field-label">Interface <span class="lighting-optional">Optional</span></span>
+                  <input
+                    class="lighting-input"
+                    type="text"
+                    placeholder="192.168.1.155"
+                    autocapitalize="none"
+                    autocomplete="off"
+                    spellcheck="false"
+                    data-lighting-interface
+                  >
+                </label>
+                <label class="lighting-field lighting-small-field">
+                  <span class="lighting-field-label">Universe Base</span>
+                  <input class="lighting-input" type="number" min="0" max="32767" inputmode="numeric" value="0" data-lighting-base>
+                </label>
+                <label class="lighting-field lighting-small-field">
+                  <span class="lighting-field-label">Refresh Hz</span>
+                  <input class="lighting-input" type="number" min="1" max="60" step="1" inputmode="decimal" value="30" data-lighting-refresh>
+                </label>
+              </div>
+              <p class="lighting-helper">Show Universe 1 maps to Art-Net port address 0 with the default base.</p>
+            </details>
+
+            <div class="lighting-editor-section">
+              <div class="lighting-section-header">
+                <h4 class="settings-subsection-title">Fixtures</h4>
+                <button class="lighting-add-button" type="button" data-lighting-add-fixture>Add Fixture</button>
+              </div>
+              <p class="lighting-empty" data-lighting-empty>No fixtures configured.</p>
+              <div class="lighting-fixture-list" data-lighting-fixture-list></div>
+            </div>
+
+            <div class="lighting-editor-section" data-lighting-cue-section hidden>
+              <div class="lighting-section-header lighting-cue-header">
+                <h4 class="settings-subsection-title">Trigger Look</h4>
+                <div class="lighting-mode-toggle" role="group" aria-label="Lighting editor output mode">
+                  <button
+                    class="lighting-mode-button is-live"
+                    type="button"
+                    data-lighting-mode="live"
+                    aria-pressed="true"
+                  >LIVE</button>
+                  <button
+                    class="lighting-mode-button is-blind"
+                    type="button"
+                    data-lighting-mode="blind"
+                    aria-pressed="false"
+                  >BLIND</button>
+                </div>
+              </div>
+              <p class="lighting-mode-status" data-lighting-mode-status data-mode="live">
+                LIVE EDITOR: SETUP - ARM TO OUTPUT
+              </p>
+              <div class="lighting-trigger-tabs" data-lighting-trigger-tabs role="tablist" aria-label="Lighting trigger looks"></div>
+              <label class="lighting-field lighting-fade-field">
+                <span class="lighting-field-label">Fade Time</span>
+                <span class="lighting-fade-input-wrap">
+                  <input class="lighting-input" type="number" min="0" max="600" step="0.1" inputmode="decimal" value="3" data-lighting-fade-time>
+                  <span>seconds</span>
+                </span>
+              </label>
+              <p class="lighting-helper">Every trigger is a complete look. LIVE recalls and updates the editor look. BLIND follows the active game look.</p>
+              <div class="lighting-cue-fixtures" data-lighting-cue-fixtures></div>
+            </div>
+
+            <p class="lighting-error-summary" data-lighting-error-summary aria-live="polite"></p>
+            <button class="lighting-save-button" type="button" data-lighting-save>Save Lighting</button>
+          </fieldset>
+        </section>
       </div>
     </section>
 

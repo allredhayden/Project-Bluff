@@ -1,0 +1,52 @@
+{
+  "version": 2,
+  "artnet": {
+    "targetHost": "255.255.255.255",
+    "interfaceAddress": "",
+    "portAddressBase": 0,
+    "refreshHz": 30.0
+  },
+  "fixtures": [],
+  "cues": {
+    "setup": {
+      "fadeMs": 3000,
+      "profiles": {
+        "shehds-par-7x18-rgbwauv-10ch": { "values": {}, "fade": [] },
+        "shehds-par-18x18-rgbwauv-10ch": { "values": {}, "fade": [] }
+      },
+      "fixtures": {}
+    },
+    "day": {
+      "fadeMs": 3000,
+      "profiles": {
+        "shehds-par-7x18-rgbwauv-10ch": { "values": {}, "fade": [] },
+        "shehds-par-18x18-rgbwauv-10ch": { "values": {}, "fade": [] }
+      },
+      "fixtures": {}
+    },
+    "nominations": {
+      "fadeMs": 3000,
+      "profiles": {
+        "shehds-par-7x18-rgbwauv-10ch": { "values": {}, "fade": [] },
+        "shehds-par-18x18-rgbwauv-10ch": { "values": {}, "fade": [] }
+      },
+      "fixtures": {}
+    },
+    "night": {
+      "fadeMs": 3000,
+      "profiles": {
+        "shehds-par-7x18-rgbwauv-10ch": { "values": {}, "fade": [] },
+        "shehds-par-18x18-rgbwauv-10ch": { "values": {}, "fade": [] }
+      },
+      "fixtures": {}
+    },
+    "stopAll": {
+      "fadeMs": 3000,
+      "profiles": {
+        "shehds-par-7x18-rgbwauv-10ch": { "values": {}, "fade": [] },
+        "shehds-par-18x18-rgbwauv-10ch": { "values": {}, "fade": [] }
+      },
+      "fixtures": {}
+    }
+  }
+}
