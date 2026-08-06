@@ -86,9 +86,9 @@ While armed, cue values and timing are validated and saved live. Fixture patch a
 7. Use `SEND TEST` beside a saved event while OSC is armed. A successful result proves only that Bluff sent a UDP datagram; confirm execution in QLab.
 8. Click Disarm OSC when finished.
 
-The ten independent OSC mappings are Setup, Day, Group Discussion, Nomination, Begin Voting, Night, Stop All, Bells, Male Scream, and Female Scream. A blank mapping is skipped. Bells and scream messages fire after the primary Day message only when those sounds actually play; toggling their arming buttons does not send OSC.
+The eleven independent OSC mappings are Setup, Day, Group Discussion, Nomination, Nomination Off, Begin Voting, Night, Stop All, Bells, Male Scream, and Female Scream. A blank mapping is skipped. Bells and scream messages fire after the primary Day message only when those sounds actually play; toggling their arming buttons does not send OSC.
 
-Group Discussion retains the original Nominations soundtrack and primary lighting cue. While it is active, the compact phase control starts at `NOMINATION`. Pressing it sends the Nomination OSC mapping and changes the shared control to `BEGIN VOTING`; pressing Begin Voting sends that mapping and returns every connected controller to `NOMINATION` for the next cycle. These phase actions do not restart audio, the timer, or the Group Discussion look, and they are unavailable in every other stage.
+Group Discussion retains the original Nominations soundtrack and primary lighting cue. While it is active, the compact phase control follows `NOMINATION` → `NOMINATION OFF` → `BEGIN VOTING`. Each press sends its matching OSC mapping and advances to the next label. Pressing Begin Voting also plays `BotC Nomination Voting Sound.mp3` on every audio-enabled browser, immediately fades the Group Discussion music down over four seconds, and returns every connected controller to `NOMINATION` for the next cycle. Ten seconds after the Begin Voting press, the music begins a ten-second fade back to its saved volume. The voting sound is a synchronized one-shot: it does not restart the Group Discussion loop, timer, or lighting look. These phase actions are unavailable in every other stage.
 
 While armed, OSC message text can be saved, but the lighting engine and OSC destination remain locked. Disarm before switching back to Art-Net.
 
@@ -106,7 +106,8 @@ While armed, OSC message text can be saved, but the lighting engine and OSC dest
 - A new trigger during a fade begins from the values being emitted at that exact moment.
 - Pressing an already-active stage remains ignored by the main interface.
 - In Art-Net mode, Bells and scream choices affect audio only. In OSC mode, their separate mappings send only when those sounds actually play during DAY.
-- Nomination and Begin Voting are OSC-only events. In Art-Net mode they update the shared phase without changing the current Group Discussion look.
+- Nomination, Nomination Off, and Begin Voting are OSC-only events. In Art-Net mode they update the shared phase without changing the current Group Discussion look.
+- Existing version-4 show configurations gain `/cue/NOM-OFF/start` as the initial Nomination Off mapping; it remains editable like every other full OSC message.
 - Stop All runs its own configurable lighting look while fading audio on every connected browser.
 
 The Art-Net runtime refreshes configured universes continuously at the saved rate, defaulting to 30 Hz. Art-Net and OSC both use UDP and provide no receiver acknowledgment. Bluff reports local send failures, but only a physical output check proves that the node, fixtures, or QLab executed a command.
@@ -129,6 +130,9 @@ When Bluff is connected to the local server, every stage and Stop All action is 
 - `SETUP` starts `BotC Setup Loop.mp3` from the beginning, then loops from `00:28.369` to the end.
 - `DAY` plays Bells when armed, fades Night out, and fades Day in. Armed scream choices play only when DAY starts.
 - `GROUP DISCUSSION` plays the gong immediately, fades current music out over three seconds, then starts the Nominations loop after two seconds.
+- `NOMINATION` changes the shared phase to Nomination Off without changing the Group Discussion audio.
+- `NOMINATION OFF` changes the shared phase to Begin Voting without changing the Group Discussion audio.
+- `BEGIN VOTING` plays `BotC Nomination Voting Sound.mp3` on every synchronized browser while fading the continuing Group Discussion loop down over four seconds, holding it down until ten seconds after the press, then fading it back up over ten seconds.
 - `NIGHT` fades the Group Discussion loop out, plays the Night intro, and starts the Night loop.
 - `STOP ALL` fades audio on all connected browsers and runs the saved Stop All lighting look.
 
@@ -145,7 +149,7 @@ node --check lighting-control.js
 node --check service-worker.js
 ```
 
-The Python suite validates both fixture channel maps, lossless version 1/2/3 migration, sparse profile/fixture priority, exclusive engine routing, all ten OSC events, nomination phase sequencing, synchronized audio metadata and elapsed time, exact OSC and ArtDMX packet bytes, fades, interrupted transitions, blackout, shared controllers, and real loopback UDP packets.
+The Python suite validates both fixture channel maps, lossless version 1/2/3/4 migration, sparse profile/fixture priority, exclusive engine routing, all eleven OSC events, nomination phase sequencing, synchronized audio metadata and elapsed time, exact OSC and ArtDMX packet bytes, fades, interrupted transitions, blackout, shared controllers, and real loopback UDP packets.
 
 ## iPhone playback
 

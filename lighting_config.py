@@ -20,10 +20,10 @@ from fixture_definitions import (
 )
 
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 TRIGGER_KEYS = ("setup", "day", "nominations", "night", "stopAll")
 OSC_AUXILIARY_TRIGGER_KEYS = ("bells", "maleScream", "femaleScream")
-OSC_PHASE_TRIGGER_KEYS = ("nomination", "beginVoting")
+OSC_PHASE_TRIGGER_KEYS = ("nomination", "nominationOff", "beginVoting")
 OSC_TRIGGER_KEYS = (
     "setup",
     "day",
@@ -38,6 +38,7 @@ TRIGGER_LABELS = {
     "day": "DAY",
     "nominations": "GROUP DISCUSSION",
     "nomination": "NOMINATION",
+    "nominationOff": "NOMINATION OFF",
     "beginVoting": "BEGIN VOTING",
     "night": "NIGHT",
     "stopAll": "STOP ALL",
@@ -85,10 +86,10 @@ def default_osc_config() -> dict[str, Any]:
 
 
 def _upgrade_legacy_config(payload: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade version 1-3 configurations without changing existing show data."""
+    """Upgrade version 1-4 configurations without changing existing show data."""
 
     version = payload.get("version")
-    if isinstance(version, bool) or version not in {1, 2, 3}:
+    if isinstance(version, bool) or version not in {1, 2, 3, 4}:
         return payload
     upgraded = copy.deepcopy(payload)
     if version == 1:
@@ -108,7 +109,12 @@ def _upgrade_legacy_config(payload: dict[str, Any]) -> dict[str, Any]:
         messages = osc.get("messages") if isinstance(osc, dict) else None
         if isinstance(messages, dict):
             for trigger in OSC_PHASE_TRIGGER_KEYS:
-                messages.setdefault(trigger, "")
+                default_message = (
+                    "/cue/NOM-OFF/start"
+                    if version == 4 and trigger == "nominationOff"
+                    else ""
+                )
+                messages.setdefault(trigger, default_message)
     upgraded["version"] = CONFIG_VERSION
     return upgraded
 

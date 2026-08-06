@@ -57,6 +57,11 @@ class ControlState:
         self._audio_events: tuple[str, ...] = ()
         self._loop_offset: float | None = None
         self._cue_revision = 0
+        self._phase_audio_revision = 0
+        self._phase_audio_event: str | None = None
+        self._phase_audio_started_monotonic: float | None = None
+        self._nomination_mix_revision = 0
+        self._nomination_mix_started_monotonic: float | None = None
         self._updated_at = _utc_now()
 
     def apply(
@@ -68,6 +73,15 @@ class ControlState:
         with self._lock:
             if trigger in OSC_PHASE_TRIGGER_KEYS:
                 self._apply_nomination_event_locked(trigger)
+                if trigger == "beginVoting":
+                    self._phase_audio_revision += 1
+                    self._phase_audio_event = trigger
+                    self._phase_audio_started_monotonic = time.monotonic()
+                    self._nomination_mix_revision += 1
+                    self._nomination_mix_started_monotonic = time.monotonic()
+                else:
+                    self._phase_audio_event = None
+                    self._phase_audio_started_monotonic = None
             elif trigger in STAGE_TRIGGERS or trigger == "stopAll":
                 self._current_stage = trigger if trigger in STAGE_TRIGGERS else None
                 self._nomination_phase = "ready" if trigger == "nominations" else None
@@ -77,6 +91,9 @@ class ControlState:
                 self._loop_offset = (
                     loop_offset if loop_offset is not None else 0.0
                 ) if trigger == "day" else None
+                self._phase_audio_event = None
+                self._phase_audio_started_monotonic = None
+                self._nomination_mix_started_monotonic = None
                 self._cue_revision += 1
             else:
                 raise ValueError("Unknown control trigger.")
@@ -95,8 +112,13 @@ class ControlState:
                 raise ControlTransitionError("A nomination is already active.")
             self._nomination_phase = "nomination"
             return
-        if self._nomination_phase != "nomination":
-            raise ControlTransitionError("Begin Voting requires an active nomination.")
+        if trigger == "nominationOff":
+            if self._nomination_phase != "nomination":
+                raise ControlTransitionError("Nomination Off requires an active nomination.")
+            self._nomination_phase = "nominationOff"
+            return
+        if self._nomination_phase != "nominationOff":
+            raise ControlTransitionError("Begin Voting requires Nomination Off first.")
         self._nomination_phase = "ready"
 
     def snapshot(self) -> dict[str, Any]:
@@ -116,6 +138,18 @@ class ControlState:
         elapsed_ms = 0
         if self._started_monotonic is not None:
             elapsed_ms = max(0, round((time.monotonic() - self._started_monotonic) * 1000))
+        phase_audio_elapsed_ms = 0
+        if self._phase_audio_started_monotonic is not None:
+            phase_audio_elapsed_ms = max(
+                0,
+                round((time.monotonic() - self._phase_audio_started_monotonic) * 1000),
+            )
+        nomination_mix_elapsed_ms = 0
+        if self._nomination_mix_started_monotonic is not None:
+            nomination_mix_elapsed_ms = max(
+                0,
+                round((time.monotonic() - self._nomination_mix_started_monotonic) * 1000),
+            )
         return {
             "sessionId": self._session_id,
             "revision": self._revision,
@@ -126,6 +160,12 @@ class ControlState:
             "elapsedMs": elapsed_ms,
             "audioEvents": list(self._audio_events),
             "loopOffset": self._loop_offset,
+            "phaseAudioRevision": self._phase_audio_revision,
+            "phaseAudioEvent": self._phase_audio_event,
+            "phaseAudioElapsedMs": phase_audio_elapsed_ms,
+            "nominationMixRevision": self._nomination_mix_revision,
+            "nominationMixActive": self._nomination_mix_started_monotonic is not None,
+            "nominationMixElapsedMs": nomination_mix_elapsed_ms,
             "updatedAt": self._updated_at,
         }
 

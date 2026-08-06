@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v20";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v22";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -54,6 +54,11 @@ const SOUND_FILES = {
     label: "Nominations Loop",
     path: "sounds/BotC Nominations Loop.mp3",
     bytes: 18616946,
+  },
+  nominationVoting: {
+    label: "Nomination Voting",
+    path: "sounds/BotC Nomination Voting Sound.mp3",
+    bytes: 1108635,
   },
 };
 
@@ -127,6 +132,10 @@ const ONE_SHOTS = {
     file: "femaleScream",
     offset: 0,
   },
+  nominationVoting: {
+    file: "nominationVoting",
+    offset: 0,
+  },
 };
 
 const FADE = {
@@ -178,13 +187,23 @@ let activeCueStartedAt = null;
 let activeCueTimerIntervalId = null;
 let lastSharedCueRevision = -1;
 let lastSharedSessionId = null;
+let lastSharedPhaseAudioRevision = -1;
+let lastSharedNominationMixRevision = -1;
 let sharedAudioRequestId = 0;
+let phaseAudioRequestId = 0;
+let nominationMixRequestId = 0;
 let latestSharedAudioState = null;
 let sharedAudioPendingUnlock = false;
+let latestSharedPhaseAudioState = null;
+let phaseAudioPendingUnlock = false;
+let latestSharedNominationMixState = null;
+let nominationMixPendingUnlock = false;
+let activeNominationMix = null;
 
 const activeLoops = new Map();
 const activeOneShots = new Set();
 const cueTimers = new Set();
+const nominationMixTimers = new Set();
 const stopTimers = new WeakMap();
 const loopResumeOffsets = {
   day: 0,
@@ -391,6 +410,11 @@ function setMasterVolume(volume, shouldSave = true) {
 
 function updateActiveTrackVolume(track, atTime = audioContext.currentTime) {
   if (!audioContext || !track || track.stopping) {
+    return;
+  }
+
+  if (track.id === "nominations" && activeNominationMix) {
+    applyNominationMixEnvelope();
     return;
   }
 
@@ -707,6 +731,12 @@ function initializeVolumeUi() {
           if (sharedAudioPendingUnlock && latestSharedAudioState) {
             synchronizeSharedStageAudio(latestSharedAudioState);
           }
+          if (phaseAudioPendingUnlock && latestSharedPhaseAudioState) {
+            synchronizeSharedPhaseAudio(latestSharedPhaseAudioState);
+          }
+          if (nominationMixPendingUnlock && latestSharedNominationMixState) {
+            synchronizeSharedNominationMix(latestSharedNominationMixState);
+          }
         })
         .catch((error) => {
           console.warn("This browser could not unlock audio playback.", error);
@@ -778,15 +808,23 @@ function updateNominationPhaseControl() {
   if (!dom.nominationPhaseButton) {
     return;
   }
-  const nominationActive = nominationPhase === "nomination";
-  dom.nominationPhaseButton.textContent = nominationActive ? "BEGIN VOTING" : "NOMINATION";
-  dom.nominationPhaseButton.setAttribute("aria-pressed", String(nominationActive));
-  dom.nominationPhaseButton.setAttribute(
-    "aria-label",
-    nominationActive
-      ? "Nomination active; begin voting"
-      : "Start nomination",
-  );
+  const phaseControl = nominationPhase === "nomination"
+    ? {
+      label: "NOMINATION OFF",
+      ariaLabel: "Nomination active; turn nomination off",
+    }
+    : nominationPhase === "nominationOff"
+      ? {
+        label: "BEGIN VOTING",
+        ariaLabel: "Nomination off; begin voting",
+      }
+      : {
+        label: "NOMINATION",
+        ariaLabel: "Start nomination",
+      };
+  dom.nominationPhaseButton.textContent = phaseControl.label;
+  dom.nominationPhaseButton.setAttribute("aria-pressed", String(nominationPhase !== "ready"));
+  dom.nominationPhaseButton.setAttribute("aria-label", phaseControl.ariaLabel);
   dom.nominationPhaseButton.disabled = (
     controlsBusy
     || nominationRequestPending
@@ -1196,6 +1234,61 @@ function clearCueTimers() {
   cueTimers.clear();
 }
 
+function clearNominationMixTimers() {
+  nominationMixTimers.forEach((timerId) => window.clearTimeout(timerId));
+  nominationMixTimers.clear();
+}
+
+function resetNominationMix() {
+  nominationMixRequestId += 1;
+  clearNominationMixTimers();
+  activeNominationMix = null;
+  latestSharedNominationMixState = null;
+  nominationMixPendingUnlock = false;
+}
+
+function scheduleNominationMixRefresh(delaySeconds, revision) {
+  const timerId = window.setTimeout(() => {
+    nominationMixTimers.delete(timerId);
+    if (activeNominationMix && activeNominationMix.revision === revision) {
+      applyNominationMixEnvelope();
+    }
+  }, Math.max(0, delaySeconds) * 1000);
+  nominationMixTimers.add(timerId);
+}
+
+function applyNominationMixEnvelope() {
+  clearNominationMixTimers();
+  if (!activeNominationMix || !audioContext) {
+    return;
+  }
+
+  const track = activeLoops.get("nominations");
+  if (!track || track.stopping) {
+    return;
+  }
+
+  const elapsedSeconds = Math.max(
+    0,
+    (performance.now() - activeNominationMix.startedAt) / 1000,
+  );
+  const envelope = window.ProjectBluffLighting.nominationMixEnvelope(
+    elapsedSeconds,
+    getTrackTargetGain(track),
+  );
+  const now = audioContext.currentTime;
+  setTrackGain(track, envelope.gain, now);
+  if (envelope.rampEndGain !== null && envelope.rampSeconds > 0) {
+    rampTrackGain(track, envelope.rampEndGain, envelope.rampSeconds, now);
+  }
+  if (envelope.nextChangeSeconds !== null) {
+    scheduleNominationMixRefresh(
+      envelope.nextChangeSeconds,
+      activeNominationMix.revision,
+    );
+  }
+}
+
 function scheduleCueTask(cueId, delaySeconds, callback) {
   const timerId = window.setTimeout(() => {
     cueTimers.delete(timerId);
@@ -1408,6 +1501,9 @@ function startLoop(id, options = {}) {
   setLoopMeterProgress(id, getLoopProgress(track, now));
   startLoopMeterUpdates();
   source.start(now, startOffset);
+  if (id === "nominations" && activeNominationMix) {
+    applyNominationMixEnvelope();
+  }
   return track;
 }
 
@@ -1516,6 +1612,7 @@ function scheduleSynchronizedLoop(cueId, id, delaySeconds, sync, options = {}) {
 
 function beginCue(stage, sync = {}) {
   const elapsed = normalizedCueElapsed(sync);
+  resetNominationMix();
   currentCueId += 1;
   clearCueTimers();
   fadeOutOneShots(remainingCueTime(0.75, elapsed));
@@ -1648,6 +1745,7 @@ function getDayLoopDispatchOffset() {
 function applySynchronizedStop(elapsedSeconds = 0) {
   sharedAudioRequestId += 1;
   sharedAudioPendingUnlock = false;
+  resetNominationMix();
   currentCueId += 1;
   clearCueTimers();
 
@@ -1696,6 +1794,81 @@ async function synchronizeSharedStageAudio(sharedAudioState) {
   }
 }
 
+async function synchronizeSharedPhaseAudio(sharedPhaseAudioState) {
+  const requestId = ++phaseAudioRequestId;
+  latestSharedPhaseAudioState = sharedPhaseAudioState;
+  const { state, receivedAt } = sharedPhaseAudioState;
+
+  try {
+    await ensureAudioReady();
+
+    if (
+      requestId !== phaseAudioRequestId
+      || currentStage !== "nominations"
+      || state.phaseAudioRevision !== lastSharedPhaseAudioRevision
+      || state.phaseAudioEvent !== "beginVoting"
+    ) {
+      return;
+    }
+
+    const deliveryElapsed = Math.max(0, performance.now() - receivedAt) / 1000;
+    const serverElapsed = Number.isFinite(state.phaseAudioElapsedMs)
+      ? Math.max(0, state.phaseAudioElapsedMs) / 1000
+      : 0;
+    activeOneShots.forEach((track) => {
+      if (track.id === "nominationVoting") {
+        fadeOutTrack(track, 0);
+      }
+    });
+    playOneShot("nominationVoting", serverElapsed + deliveryElapsed);
+    phaseAudioPendingUnlock = false;
+  } catch (error) {
+    if (requestId !== phaseAudioRequestId) {
+      return;
+    }
+    phaseAudioPendingUnlock = true;
+    console.warn("The synchronized voting sound is waiting for a local browser gesture.", error);
+    setStatus("Tap MUTE once to enable the voting sound on this browser.");
+  }
+}
+
+async function synchronizeSharedNominationMix(sharedNominationMixState) {
+  const requestId = ++nominationMixRequestId;
+  latestSharedNominationMixState = sharedNominationMixState;
+  const { state, receivedAt } = sharedNominationMixState;
+
+  try {
+    await ensureAudioReady();
+
+    if (
+      requestId !== nominationMixRequestId
+      || currentStage !== "nominations"
+      || state.nominationMixRevision !== lastSharedNominationMixRevision
+      || state.nominationMixActive !== true
+    ) {
+      return;
+    }
+
+    const deliveryElapsed = Math.max(0, performance.now() - receivedAt) / 1000;
+    const serverElapsed = Number.isFinite(state.nominationMixElapsedMs)
+      ? Math.max(0, state.nominationMixElapsedMs) / 1000
+      : 0;
+    activeNominationMix = {
+      revision: state.nominationMixRevision,
+      startedAt: performance.now() - (serverElapsed + deliveryElapsed) * 1000,
+    };
+    nominationMixPendingUnlock = false;
+    applyNominationMixEnvelope();
+  } catch (error) {
+    if (requestId !== nominationMixRequestId) {
+      return;
+    }
+    nominationMixPendingUnlock = true;
+    console.warn("The synchronized nomination music fade is waiting for a local gesture.", error);
+    setStatus("Tap MUTE once to enable the nomination music fade on this browser.");
+  }
+}
+
 function applySharedControlState(state) {
   if (!state || typeof state !== "object") {
     return;
@@ -1712,22 +1885,64 @@ function applySharedControlState(state) {
   if (sharedSessionChanged) {
     lastSharedSessionId = nextSessionId;
     lastSharedCueRevision = -1;
+    lastSharedPhaseAudioRevision = -1;
+    lastSharedNominationMixRevision = -1;
   }
   const elapsedSeconds = Number.isFinite(state.elapsedMs) ? Math.max(0, state.elapsedMs) / 1000 : 0;
+  const phaseAudioRevision = Number.isInteger(state.phaseAudioRevision)
+    ? state.phaseAudioRevision
+    : 0;
+  const nominationMixRevision = Number.isInteger(state.nominationMixRevision)
+    ? state.nominationMixRevision
+    : 0;
   const nextNominationPhase = stage === "nominations"
-    ? (state.nominationPhase === "nomination" ? "nomination" : "ready")
+    ? (state.nominationPhase === "nomination" || state.nominationPhase === "nominationOff"
+      ? state.nominationPhase
+      : "ready")
     : null;
   const nominationPhaseChanged = nextNominationPhase !== nominationPhase;
   const cueChanged = cueRevision !== lastSharedCueRevision;
+  const phaseAudioChanged = phaseAudioRevision !== lastSharedPhaseAudioRevision;
+  const nominationMixChanged = nominationMixRevision !== lastSharedNominationMixRevision;
+  const shouldPlayVotingSound = (
+    phaseAudioChanged
+    && stage === "nominations"
+    && state.phaseAudioEvent === "beginVoting"
+  );
+  const shouldApplyNominationMix = (
+    nominationMixChanged
+    && stage === "nominations"
+    && state.nominationMixActive === true
+  );
 
-  if (!cueChanged && !nominationPhaseChanged) {
+  if (
+    !cueChanged
+    && !nominationPhaseChanged
+    && !phaseAudioChanged
+    && !nominationMixChanged
+  ) {
     return;
   }
 
   setNominationPhase(nextNominationPhase);
+  if (state.phaseAudioEvent !== "beginVoting") {
+    phaseAudioRequestId += 1;
+    latestSharedPhaseAudioState = null;
+    phaseAudioPendingUnlock = false;
+  }
+  if (phaseAudioChanged) {
+    lastSharedPhaseAudioRevision = phaseAudioRevision;
+  }
+  if (nominationMixChanged) {
+    lastSharedNominationMixRevision = nominationMixRevision;
+  }
 
   if (cueChanged) {
     lastSharedCueRevision = cueRevision;
+    resetNominationMix();
+    phaseAudioRequestId += 1;
+    latestSharedPhaseAudioState = null;
+    phaseAudioPendingUnlock = false;
 
     if (cueRevision === 0 && stage === null && !(sharedSessionChanged && hadSharedSession)) {
       return;
@@ -1743,14 +1958,34 @@ function applySharedControlState(state) {
     setMediaPlaybackState("playing");
     enableStopButton();
     setStatus(`Synchronizing ${STAGES[stage]} audio on this browser.`);
-    synchronizeSharedStageAudio({ state, receivedAt: performance.now() });
+    const receivedAt = performance.now();
+    const stageAudioPromise = synchronizeSharedStageAudio({ state, receivedAt });
+    if (shouldApplyNominationMix) {
+      stageAudioPromise.then(() => {
+        synchronizeSharedNominationMix({ state, receivedAt });
+      });
+    }
+    if (shouldPlayVotingSound) {
+      stageAudioPromise.then(() => {
+        synchronizeSharedPhaseAudio({ state, receivedAt });
+      });
+    }
     return;
+  }
+
+  if (shouldApplyNominationMix) {
+    synchronizeSharedNominationMix({ state, receivedAt: performance.now() });
+  }
+  if (shouldPlayVotingSound) {
+    synchronizeSharedPhaseAudio({ state, receivedAt: performance.now() });
   }
 
   setStatus(
     nextNominationPhase === "nomination"
       ? "NOMINATION active on another controller."
-      : "VOTING started on another controller.",
+      : nextNominationPhase === "nominationOff"
+        ? "NOMINATION OFF on another controller."
+        : "VOTING started on another controller.",
   );
 }
 
@@ -1813,10 +2048,19 @@ async function handleNominationPhaseTap() {
     return;
   }
 
-  const trigger = nominationPhase === "nomination" ? "beginVoting" : "nomination";
+  const trigger = nominationPhase === "nomination"
+    ? "nominationOff"
+    : nominationPhase === "nominationOff"
+      ? "beginVoting"
+      : "nomination";
   nominationRequestPending = true;
   setControlsBusy(true);
-  setStatus(trigger === "nomination" ? "Starting nomination." : "Starting voting.");
+  const pendingStatus = trigger === "nomination"
+    ? "Starting nomination."
+    : trigger === "nominationOff"
+      ? "Turning nomination off."
+      : "Starting voting.";
+  setStatus(pendingStatus);
 
   try {
     const payload = await dispatchLightingTrigger(trigger);
@@ -1824,7 +2068,12 @@ async function handleNominationPhaseTap() {
       setStatus("Nomination control failed.");
       return;
     }
-    setStatus(trigger === "nomination" ? "NOMINATION active." : "VOTING started.");
+    const completedStatus = trigger === "nomination"
+      ? "NOMINATION active."
+      : trigger === "nominationOff"
+        ? "NOMINATION OFF."
+        : "VOTING started.";
+    setStatus(completedStatus);
   } finally {
     nominationRequestPending = false;
     setControlsBusy(false);

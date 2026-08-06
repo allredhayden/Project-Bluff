@@ -169,6 +169,42 @@
     return payload;
   }
 
+  function nominationMixEnvelope(elapsedSeconds, targetGain = 1) {
+    const elapsed = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
+    const target = Number.isFinite(targetGain) ? Math.max(0, targetGain) : 1;
+
+    if (elapsed < 4) {
+      return {
+        gain: target * (1 - elapsed / 4),
+        rampEndGain: 0,
+        rampSeconds: 4 - elapsed,
+        nextChangeSeconds: 10 - elapsed,
+      };
+    }
+    if (elapsed < 10) {
+      return {
+        gain: 0,
+        rampEndGain: null,
+        rampSeconds: 0,
+        nextChangeSeconds: 10 - elapsed,
+      };
+    }
+    if (elapsed < 20) {
+      return {
+        gain: target * ((elapsed - 10) / 10),
+        rampEndGain: target,
+        rampSeconds: 20 - elapsed,
+        nextChangeSeconds: null,
+      };
+    }
+    return {
+      gain: target,
+      rampEndGain: null,
+      rampSeconds: 0,
+      nextChangeSeconds: null,
+    };
+  }
+
   function normalizeOutputMode(value) {
     return value === "blind" ? "blind" : "live";
   }
@@ -1430,6 +1466,7 @@
     hasProgrammedValue,
     initialize,
     nextFixturePatch,
+    nominationMixEnvelope,
     normalizeLightingEngine,
     normalizeOutputMode,
     onSettingsOpened,

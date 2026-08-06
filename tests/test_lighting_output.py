@@ -152,13 +152,16 @@ def test_nomination_events_are_osc_only_and_obey_the_shared_arm_gate():
     config["outputMode"] = "osc"
     config["osc"]["messages"].update(
         nomination='/cue/NOMINATION/start "phase one"',
+        nominationOff="/cue/NOMINATION-OFF/start",
         beginVoting="/cue/VOTING/start",
     )
     controller.arm()
     assert controller.trigger("nomination")["status"] == "sent"
+    assert controller.trigger("nominationOff")["status"] == "sent"
     assert controller.trigger("beginVoting")["status"] == "sent"
     assert [call[2] for call in osc.calls] == [
         '/cue/NOMINATION/start "phase one"',
+        "/cue/NOMINATION-OFF/start",
         "/cue/VOTING/start",
     ]
     assert artnet.calls == []

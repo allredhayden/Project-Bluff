@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "outputMode": "artnet",
   "artnet": {
     "targetHost": "255.255.255.255",
@@ -15,6 +15,7 @@
       "day": "",
       "nominations": "",
       "nomination": "",
+      "nominationOff": "",
       "beginVoting": "",
       "night": "",
       "stopAll": "",

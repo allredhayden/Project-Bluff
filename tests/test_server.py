@@ -14,7 +14,11 @@ from server import ControlState, create_app
 
 
 def state_without_elapsed(state):
-    return {key: value for key, value in state.items() if key != "elapsedMs"}
+    return {
+        key: value
+        for key, value in state.items()
+        if key not in {"elapsedMs", "phaseAudioElapsedMs", "nominationMixElapsedMs"}
+    }
 
 
 def config_with_fixture():
@@ -146,6 +150,12 @@ def test_static_server_health_range_and_route_whitelist(app_bundle):
     assert client.get("/app.js").mimetype == "text/javascript"
     assert client.get("/lighting-control.js").mimetype == "text/javascript"
     assert client.get("/sounds/BotC%20Gong.mp3", headers={"Range": "bytes=0-31"}).status_code == 206
+    voting_sound = client.get(
+        "/sounds/BotC%20Nomination%20Voting%20Sound.mp3",
+        headers={"Range": "bytes=0-31"},
+    )
+    assert voting_sound.status_code == 206
+    assert len(voting_sound.data) == 32
     assert client.get("/server.py").status_code == 404
     assert client.get("/sounds/../server.py").status_code == 404
     assert client.get("/api/health").get_json() == {
@@ -167,8 +177,12 @@ def test_fixture_definitions_are_fixed_to_the_two_supported_pars(app_bundle):
         "SETUP", "DAY", "GROUP DISCUSSION", "NIGHT", "STOP ALL",
     ]
     assert [trigger["id"] for trigger in payload["oscTriggers"]] == [
-        "setup", "day", "nominations", "nomination", "beginVoting",
+        "setup", "day", "nominations", "nomination", "nominationOff", "beginVoting",
         "night", "stopAll", "bells", "maleScream", "femaleScream",
+    ]
+    assert [trigger["label"] for trigger in payload["oscTriggers"]] == [
+        "SETUP", "DAY", "GROUP DISCUSSION", "NOMINATION", "NOMINATION OFF", "BEGIN VOTING",
+        "NIGHT", "STOP ALL", "BELLS", "MALE SCREAM", "FEMALE SCREAM",
     ]
     seven, eighteen = payload["fixtures"]
     seven_channels = {parameter["key"]: parameter["channel"] for parameter in seven["parameters"]}
@@ -372,8 +386,16 @@ def test_nomination_phase_sequence_is_shared_and_resets_with_the_stage(app_bundl
     initial = client.get("/api/control/state").get_json()
     assert initial["currentStage"] is None
     assert initial["nominationPhase"] is None
+    assert initial["phaseAudioRevision"] == 0
+    assert initial["phaseAudioEvent"] is None
+    assert initial["phaseAudioElapsedMs"] == 0
+    assert initial["nominationMixRevision"] == 0
+    assert initial["nominationMixActive"] is False
+    assert initial["nominationMixElapsedMs"] == 0
 
     assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 409
+    assert client.post("/api/control/trigger", json={"trigger": "nominationOff"}).status_code == 409
+    assert client.post("/api/control/trigger", json={"trigger": "beginVoting"}).status_code == 409
     group = client.post("/api/control/trigger", json={"trigger": "nominations"}).get_json()
     assert group["state"]["currentStage"] == "nominations"
     assert group["state"]["nominationPhase"] == "ready"
@@ -381,20 +403,74 @@ def test_nomination_phase_sequence_is_shared_and_resets_with_the_stage(app_bundl
     nomination = client.post("/api/control/trigger", json={"trigger": "nomination"})
     assert nomination.status_code == 200
     assert nomination.get_json()["state"]["nominationPhase"] == "nomination"
+    assert nomination.get_json()["state"]["phaseAudioRevision"] == 0
+    assert nomination.get_json()["state"]["nominationMixRevision"] == 0
+    assert nomination.get_json()["state"]["nominationMixActive"] is False
+    assert nomination.get_json()["state"]["nominationMixElapsedMs"] == 0
     revision = nomination.get_json()["state"]["revision"]
     repeated = client.post("/api/control/trigger", json={"trigger": "nomination"})
     assert repeated.status_code == 409
     assert client.get("/api/control/state").get_json()["revision"] == revision
 
+    early_voting = client.post("/api/control/trigger", json={"trigger": "beginVoting"})
+    assert early_voting.status_code == 409
+    assert client.get("/api/control/state").get_json()["revision"] == revision
+
     with app.test_client() as second_client:
         assert second_client.get("/api/control/state").get_json()["nominationPhase"] == "nomination"
+        nomination_off = second_client.post(
+            "/api/control/trigger", json={"trigger": "nominationOff"}
+        )
+    assert nomination_off.status_code == 200
+    nomination_off_state = nomination_off.get_json()["state"]
+    assert nomination_off_state["nominationPhase"] == "nominationOff"
+    assert nomination_off_state["phaseAudioRevision"] == 0
+    assert nomination_off_state["phaseAudioEvent"] is None
+    assert nomination_off_state["nominationMixRevision"] == 0
+    assert nomination_off_state["nominationMixActive"] is False
+    off_revision = nomination_off_state["revision"]
+    assert client.post("/api/control/trigger", json={"trigger": "nominationOff"}).status_code == 409
+    assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 409
+    assert client.get("/api/control/state").get_json()["revision"] == off_revision
+
+    with app.test_client() as second_client:
+        assert second_client.get("/api/control/state").get_json()["nominationPhase"] == "nominationOff"
         voting = second_client.post("/api/control/trigger", json={"trigger": "beginVoting"})
     assert voting.status_code == 200
-    assert voting.get_json()["state"]["nominationPhase"] == "ready"
+    voting_state = voting.get_json()["state"]
+    assert voting_state["nominationPhase"] == "ready"
+    assert voting_state["phaseAudioRevision"] == 1
+    assert voting_state["phaseAudioEvent"] == "beginVoting"
+    assert voting_state["phaseAudioElapsedMs"] >= 0
+    assert voting_state["nominationMixRevision"] == 1
+    assert voting_state["nominationMixActive"] is True
+    assert voting_state["nominationMixElapsedMs"] >= 0
+    time.sleep(0.012)
+    assert client.get("/api/control/state").get_json()["phaseAudioElapsedMs"] >= 5
     assert client.post("/api/control/trigger", json={"trigger": "beginVoting"}).status_code == 409
+
+    next_nomination = client.post("/api/control/trigger", json={"trigger": "nomination"})
+    assert next_nomination.status_code == 200
+    assert next_nomination.get_json()["state"]["phaseAudioEvent"] is None
+    assert next_nomination.get_json()["state"]["phaseAudioElapsedMs"] == 0
+    assert next_nomination.get_json()["state"]["nominationMixRevision"] == 1
+    assert next_nomination.get_json()["state"]["nominationMixActive"] is True
+    second_off = client.post("/api/control/trigger", json={"trigger": "nominationOff"})
+    assert second_off.status_code == 200
+    assert second_off.get_json()["state"]["nominationPhase"] == "nominationOff"
+    second_voting = client.post("/api/control/trigger", json={"trigger": "beginVoting"})
+    assert second_voting.status_code == 200
+    assert second_voting.get_json()["state"]["phaseAudioRevision"] == 2
+    assert second_voting.get_json()["state"]["nominationMixRevision"] == 2
 
     night = client.post("/api/control/trigger", json={"trigger": "night"}).get_json()
     assert night["state"]["nominationPhase"] is None
+    assert night["state"]["phaseAudioRevision"] == 2
+    assert night["state"]["phaseAudioEvent"] is None
+    assert night["state"]["phaseAudioElapsedMs"] == 0
+    assert night["state"]["nominationMixRevision"] == 2
+    assert night["state"]["nominationMixActive"] is False
+    assert night["state"]["nominationMixElapsedMs"] == 0
     assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 409
     assert runtime.calls == []
 
@@ -441,7 +517,7 @@ def test_osc_mode_routes_primary_and_actual_day_auxiliaries_in_order(tmp_path):
     assert after["elapsedMs"] >= before["elapsedMs"]
 
 
-def test_osc_mode_routes_group_nomination_and_voting_as_independent_events(tmp_path):
+def test_osc_mode_routes_group_nomination_off_and_voting_as_independent_events(tmp_path):
     runtime = FakeRuntime()
     osc_sender = FakeOscSender()
     app = create_app(tmp_path / "lighting.json", runtime, ControlState(), osc_sender)
@@ -452,6 +528,7 @@ def test_osc_mode_routes_group_nomination_and_voting_as_independent_events(tmp_p
     config["osc"]["messages"].update(
         nominations="/cue/GROUP/start",
         nomination='/cue/NOMINATION/start "phase one"',
+        nominationOff="/cue/NOMINATION-OFF/start",
         beginVoting="/cue/VOTING/start",
     )
     assert client.put("/api/lighting/config", json=config).status_code == 200
@@ -459,14 +536,19 @@ def test_osc_mode_routes_group_nomination_and_voting_as_independent_events(tmp_p
 
     group = client.post("/api/control/trigger", json={"trigger": "nominations"})
     nomination = client.post("/api/control/trigger", json={"trigger": "nomination"})
+    nomination_off = client.post("/api/control/trigger", json={"trigger": "nominationOff"})
     voting = client.post("/api/control/trigger", json={"trigger": "beginVoting"})
 
-    assert [response.status_code for response in (group, nomination, voting)] == [200, 200, 200]
+    assert [response.status_code for response in (group, nomination, nomination_off, voting)] == [
+        200, 200, 200, 200,
+    ]
     assert nomination.get_json()["state"]["nominationPhase"] == "nomination"
+    assert nomination_off.get_json()["state"]["nominationPhase"] == "nominationOff"
     assert voting.get_json()["state"]["nominationPhase"] == "ready"
     assert [call[2] for call in osc_sender.calls] == [
         "/cue/GROUP/start",
         '/cue/NOMINATION/start "phase one"',
+        "/cue/NOMINATION-OFF/start",
         "/cue/VOTING/start",
     ]
     assert runtime.calls == []
@@ -483,6 +565,7 @@ def test_artnet_nomination_phase_does_not_disturb_the_group_discussion_look(tmp_
 
     assert client.post("/api/control/trigger", json={"trigger": "nominations"}).status_code == 200
     assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 200
+    assert client.post("/api/control/trigger", json={"trigger": "nominationOff"}).status_code == 200
     assert client.post("/api/control/trigger", json={"trigger": "beginVoting"}).status_code == 200
 
     assert runtime.calls == ["nominations"]
