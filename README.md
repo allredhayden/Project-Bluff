@@ -12,7 +12,9 @@ Lighting configuration is disabled when the page is not connected to the local B
 
 ### Local soundtrack and lighting control
 
-Run the Bluff server on the show computer and open it from that computer or a phone on the same private network. All connected pages share the current stage, timer, lighting engine, and lighting configuration. The browser where a stage is tapped plays the soundtrack; the server independently sends lighting through the selected engine.
+Run the Bluff server on the show computer and open it from that computer or a phone on the same private network. All connected pages share the current stage, timer, soundtrack cue, lighting engine, and lighting configuration. A stage pressed on any controller starts or joins that cue on every connected browser. The server pushes control changes immediately and the existing state poll remains as a fallback. Browsers use the server-reported cue time once when the event arrives so loops and one-shots begin at the matching position; Bluff does not continually time-stretch or seek active playback.
+
+The `MUTE` control beside Master volume is saved only in that browser. Muting sets that browser's output to silence without stopping its cue timeline, so it can be unmuted during a stage without restarting the music. Use this to keep the show computer audible while leaving phones and backup controllers muted. On each device, tap `MUTE` once after opening Bluff to satisfy browsers that require a local gesture before remote audio may play; tap again if that device should remain audible.
 
 The saved engine selector is mutually exclusive: `ART-NET` uses Bluff's native DMX engine, while `OSC` sends complete event messages to QLab or another OSC receiver. Both engines use the same Arm control and start disarmed after every server launch.
 
@@ -64,7 +66,7 @@ Runtime lighting configuration is stored in `instance/lighting-config.json`, whi
 2. Open Settings, then Lighting, and select `ART-NET`.
 3. Open Art-Net Output. Leave Target at `255.255.255.255` for broadcast, or enter the node address for unicast. Enter the show-network interface address only when the computer needs an explicit adapter binding.
 4. Add each fixture, name it, select 7x18 or 18x18, and enter its show universe and starting DMX address.
-5. Select each fixed trigger: Setup, Day, Nominations, Night, and Stop All.
+5. Select each fixed trigger: Setup, Day, Group Discussion, Night, and Stop All.
 6. Program the ALL card for each fixture profile, then add only the individual fixture values that should override it. Blank individual values inherit the ALL card. Choose Fade or Snap for each programmed parameter. Auto Program always snaps.
 7. Set the cue fade time and save.
 8. Click Arm Art-Net once after each server launch. Arming begins with an all-zero HOME frame.
@@ -84,7 +86,9 @@ While armed, cue values and timing are validated and saved live. Fixture patch a
 7. Use `SEND TEST` beside a saved event while OSC is armed. A successful result proves only that Bluff sent a UDP datagram; confirm execution in QLab.
 8. Click Disarm OSC when finished.
 
-The eight independent OSC mappings are Setup, Day, Nominations, Night, Stop All, Bells, Male Scream, and Female Scream. A blank mapping is skipped. Bells and scream messages fire after the primary Day message only when those sounds actually play; toggling their arming buttons does not send OSC.
+The ten independent OSC mappings are Setup, Day, Group Discussion, Nomination, Begin Voting, Night, Stop All, Bells, Male Scream, and Female Scream. A blank mapping is skipped. Bells and scream messages fire after the primary Day message only when those sounds actually play; toggling their arming buttons does not send OSC.
+
+Group Discussion retains the original Nominations soundtrack and primary lighting cue. While it is active, the compact phase control starts at `NOMINATION`. Pressing it sends the Nomination OSC mapping and changes the shared control to `BEGIN VOTING`; pressing Begin Voting sends that mapping and returns every connected controller to `NOMINATION` for the next cycle. These phase actions do not restart audio, the timer, or the Group Discussion look, and they are unavailable in every other stage.
 
 While armed, OSC message text can be saved, but the lighting engine and OSC destination remain locked. Disarm before switching back to Art-Net.
 
@@ -102,7 +106,8 @@ While armed, OSC message text can be saved, but the lighting engine and OSC dest
 - A new trigger during a fade begins from the values being emitted at that exact moment.
 - Pressing an already-active stage remains ignored by the main interface.
 - In Art-Net mode, Bells and scream choices affect audio only. In OSC mode, their separate mappings send only when those sounds actually play during DAY.
-- Stop All runs its own configurable lighting look while fading local audio.
+- Nomination and Begin Voting are OSC-only events. In Art-Net mode they update the shared phase without changing the current Group Discussion look.
+- Stop All runs its own configurable lighting look while fading audio on every connected browser.
 
 The Art-Net runtime refreshes configured universes continuously at the saved rate, defaulting to 30 Hz. Art-Net and OSC both use UDP and provide no receiver acknowledgment. Bluff reports local send failures, but only a physical output check proves that the node, fixtures, or QLab executed a command.
 
@@ -119,11 +124,13 @@ The Art-Net runtime refreshes configured universes continuously at the saved rat
 
 ## Soundtrack behavior
 
+When Bluff is connected to the local server, every stage and Stop All action is distributed to all open controllers. DAY also distributes the exact Bells/Male Scream/Female Scream set that was confirmed on the initiating controller, plus the current resumable Day-loop position. The static audio-only site retains single-browser playback because it has no shared server.
+
 - `SETUP` starts `BotC Setup Loop.mp3` from the beginning, then loops from `00:28.369` to the end.
 - `DAY` plays Bells when armed, fades Night out, and fades Day in. Armed scream choices play only when DAY starts.
-- `NOMINATIONS` plays the gong immediately, fades current music out over three seconds, then starts the Nominations loop after two seconds.
-- `NIGHT` fades Nominations out, plays the Night intro, and starts the Night loop.
-- `STOP ALL` fades all local audio and runs the saved Stop All lighting look.
+- `GROUP DISCUSSION` plays the gong immediately, fades current music out over three seconds, then starts the Nominations loop after two seconds.
+- `NIGHT` fades the Group Discussion loop out, plays the Night intro, and starts the Night loop.
+- `STOP ALL` fades audio on all connected browsers and runs the saved Stop All lighting look.
 
 ## Tests
 
@@ -138,7 +145,7 @@ node --check lighting-control.js
 node --check service-worker.js
 ```
 
-The Python suite validates both fixture channel maps, lossless version 1/2 migration, sparse profile/fixture priority, exclusive engine routing, all eight OSC events, exact OSC and ArtDMX packet bytes, fades, interrupted transitions, blackout, shared controllers, and real loopback UDP packets.
+The Python suite validates both fixture channel maps, lossless version 1/2/3 migration, sparse profile/fixture priority, exclusive engine routing, all ten OSC events, nomination phase sequencing, synchronized audio metadata and elapsed time, exact OSC and ArtDMX packet bytes, fades, interrupted transitions, blackout, shared controllers, and real loopback UDP packets.
 
 ## iPhone playback
 

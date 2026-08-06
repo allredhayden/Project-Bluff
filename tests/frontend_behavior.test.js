@@ -33,7 +33,7 @@ function blankConfig() {
     };
   });
   return {
-    version: 3,
+    version: 4,
     outputMode: "artnet",
     artnet: {
       targetHost: "255.255.255.255",
@@ -45,7 +45,8 @@ function blankConfig() {
       targetHost: "127.0.0.1",
       targetPort: 53000,
       messages: {
-        setup: "", day: "", nominations: "", night: "", stopAll: "",
+        setup: "", day: "", nominations: "", nomination: "", beginVoting: "",
+        night: "", stopAll: "",
         bells: "", maleScream: "", femaleScream: "",
       },
     },
@@ -163,7 +164,7 @@ test("configuration comparison ignores object key order but detects cue edits", 
     artnet: copied.artnet,
     osc: copied.osc,
     outputMode: "artnet",
-    version: 3,
+    version: 4,
   };
   assert.equal(lighting.configsEqual(first, reordered), true);
   reordered.cues.night.fixtures["fixture-one"].values.blue = 255;
@@ -232,6 +233,22 @@ test("lighting engine defaults to Art-Net and DAY events preserve actual playbac
     maleScream: false,
     femaleScream: true,
   })), ["day", "bells", "femaleScream"]);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(lighting.buildControlTriggerPayload(
+      "day",
+      ["bells", "femaleScream"],
+      { loopOffset: 91.25 },
+    ))),
+    {
+      trigger: "day",
+      auxiliaryTriggers: ["bells", "femaleScream"],
+      loopOffset: 91.25,
+    },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(lighting.buildControlTriggerPayload("night", [], { loopOffset: 10 }))),
+    { trigger: "night" },
+  );
 });
 
 test("cue edits recall only the output-driving look for each mode", () => {
@@ -273,13 +290,13 @@ test("service worker bypasses lighting API requests before any cache response", 
 test("service worker cache version and dual lighting asset match the application", () => {
   const appSource = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
   const workerSource = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
-  assert.match(appSource, /AUDIO_CACHE_NAME = "botc-soundtrack-v18"/);
-  assert.match(workerSource, /CACHE_NAME = "botc-soundtrack-v18"/);
+  assert.match(appSource, /AUDIO_CACHE_NAME = "botc-soundtrack-v20"/);
+  assert.match(workerSource, /CACHE_NAME = "botc-soundtrack-v20"/);
   assert.match(workerSource, /"\.\/lighting-control\.js"/);
   assert.doesNotMatch(workerSource, /osc-control/);
 });
 
-test("service worker activation deletes old caches and preserves v18", async () => {
+test("service worker activation deletes old caches and preserves v20", async () => {
   const listeners = {};
   const deleted = [];
   const self = {
@@ -294,7 +311,7 @@ test("service worker activation deletes old caches and preserves v18", async () 
       deleted.push(name);
       return true;
     },
-    keys: async () => ["botc-soundtrack-v17", "botc-soundtrack-v18", "unrelated-old-cache"],
+    keys: async () => ["botc-soundtrack-v19", "botc-soundtrack-v20", "unrelated-old-cache"],
     open: async () => ({ addAll: async () => undefined }),
   };
   vm.runInNewContext(
@@ -304,15 +321,42 @@ test("service worker activation deletes old caches and preserves v18", async () 
   let activation = null;
   listeners.activate({ waitUntil(promise) { activation = promise; } });
   await activation;
-  assert.deepEqual(deleted.sort(), ["botc-soundtrack-v17", "unrelated-old-cache"]);
+  assert.deepEqual(deleted.sort(), ["botc-soundtrack-v19", "unrelated-old-cache"]);
 });
 
 test("primary stages dispatch actual auxiliary sounds while Stop All remains singular", () => {
   const source = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
   assert.match(source, /buildStageTriggers\(stage/);
-  assert.match(source, /dispatchLightingTrigger\(stage, lightingTriggers\.slice\(1\)\)/);
+  assert.match(source, /dispatchLightingTrigger\(stage, audioEvents, \{ loopOffset \}\)/);
   assert.match(source, /dispatchLightingTrigger\("stopAll"\)/);
   assert.doesNotMatch(source, /ProjectBluffOsc/);
+});
+
+test("shared audio joins once at the server elapsed time and mute stays browser-local", () => {
+  const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
+  const appSource = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(projectRoot, "server.py"), "utf8");
+  assert.match(html, /data-local-mute/);
+  assert.match(appSource, /LOCAL_MUTE_STORAGE_KEY = "project-bluff-local-muted-v1"/);
+  assert.match(appSource, /localMuted \? 0 : volumeSettings\.master/);
+  assert.match(appSource, /lastSharedCueRevision/);
+  assert.match(appSource, /sharedSessionChanged/);
+  assert.match(appSource, /serverElapsed \+ deliveryElapsed/);
+  assert.match(appSource, /normalizeSharedAudioEvents\(state\)/);
+  assert.match(appSource, /loopOffset: Number\.isFinite\(state\.loopOffset\)/);
+  assert.match(serverSource, /"cueRevision": self\._cue_revision/);
+  assert.match(serverSource, /"elapsedMs": elapsed_ms/);
+  assert.match(serverSource, /"audioEvents": list\(self\._audio_events\)/);
+  assert.match(serverSource, /"loopOffset": self\._loop_offset/);
+  assert.match(serverSource, /event: control/);
+  assert.match(
+    fs.readFileSync(path.join(projectRoot, "lighting-control.js"), "utf8"),
+    /new global\.EventSource\("api\/control\/events"\)/,
+  );
+  assert.match(
+    fs.readFileSync(path.join(projectRoot, "lighting-control.js"), "utf8"),
+    /state\.sessionId !== controlSessionId/,
+  );
 });
 
 test("operator UI offers mutually exclusive Art-Net and OSC controls", () => {
@@ -325,7 +369,27 @@ test("operator UI offers mutually exclusive Art-Net and OSC controls", () => {
   assert.match(html, /data-lighting-engine="artnet"/);
   assert.match(html, /data-lighting-engine="osc"/);
   assert.match(html, /data-lighting-osc-message-list/);
+  assert.match(html, /GROUP DISCUSSION/);
+  assert.match(html, /data-nomination-phase/);
   assert.match(fs.readFileSync(path.join(projectRoot, "lighting-control.js"), "utf8"), /lighting-cue-profile-group/);
   assert.doesNotMatch(html, /Grimoire/);
   assert.match(server, /OSC/);
+});
+
+test("group discussion exposes one synchronized two-step nomination control", () => {
+  const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
+  const appSource = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(projectRoot, "server.py"), "utf8");
+  assert.match(html, /class="group-discussion-cue-group"/);
+  assert.match(html, /class="nomination-phase-button"/);
+  assert.match(appSource, /nominationActive \? "BEGIN VOTING" : "NOMINATION"/);
+  assert.match(appSource, /currentStage !== "nominations"/);
+  assert.match(appSource, /await dispatchLightingTrigger\(trigger\)/);
+  const phaseHandler = appSource.slice(
+    appSource.indexOf("async function handleNominationPhaseTap"),
+    appSource.indexOf("async function stopAll"),
+  );
+  assert.doesNotMatch(phaseHandler, /runStageCue|ensureAudioReady|setCurrentStage/);
+  assert.match(serverSource, /"nominationPhase": self\._nomination_phase/);
+  assert.match(serverSource, /control_dispatch_lock/);
 });

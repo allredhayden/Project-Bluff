@@ -25,10 +25,13 @@
   let cueSyncPromise = null;
   const pendingCueTriggers = new Set();
   let lastControlRevision = -1;
+  let controlSessionId = null;
   let onControlState = null;
+  let onAvailabilityChange = null;
   let configPollId = null;
   let controlPollId = null;
   let statusPollId = null;
+  let controlEventSource = null;
 
   class ApiError extends Error {
     constructor(message, response = null, payload = null) {
@@ -156,6 +159,16 @@
     return stageTriggers;
   }
 
+  function buildControlTriggerPayload(trigger, auxiliaryTriggers = [], options = {}) {
+    const payload = auxiliaryTriggers.length > 0
+      ? { trigger, auxiliaryTriggers: [...auxiliaryTriggers] }
+      : { trigger };
+    if (trigger === "day" && Number.isFinite(options.loopOffset)) {
+      payload.loopOffset = Math.max(0, options.loopOffset);
+    }
+    return payload;
+  }
+
   function normalizeOutputMode(value) {
     return value === "blind" ? "blind" : "live";
   }
@@ -271,6 +284,9 @@
       setStatus("LIGHTING REQUIRES THE LOCAL BLUFF SERVER", "warning");
     }
     updateControlAvailability();
+    if (typeof onAvailabilityChange === "function") {
+      onAvailabilityChange(available);
+    }
   }
 
   async function requestJson(url, options = {}) {
@@ -1210,7 +1226,14 @@
   }
 
   function publishControlState(state) {
-    if (!state || !Number.isInteger(state.revision) || state.revision <= lastControlRevision) {
+    if (!state || !Number.isInteger(state.revision)) {
+      return;
+    }
+    if (typeof state.sessionId === "string" && state.sessionId !== controlSessionId) {
+      controlSessionId = state.sessionId;
+      lastControlRevision = -1;
+    }
+    if (state.revision <= lastControlRevision) {
       return;
     }
     lastControlRevision = state.revision;
@@ -1233,6 +1256,21 @@
     } catch (error) {
       // A temporary observer-poll failure must not interrupt local audio.
     }
+  }
+
+  function startControlEventStream() {
+    if (!available || typeof global.EventSource !== "function" || controlEventSource) {
+      return;
+    }
+
+    controlEventSource = new global.EventSource("api/control/events");
+    controlEventSource.addEventListener("control", (event) => {
+      try {
+        publishControlState(JSON.parse(event.data));
+      } catch (error) {
+        // The regular control-state poll remains the fallback for malformed events.
+      }
+    });
   }
 
   async function pollRuntimeStatus() {
@@ -1269,23 +1307,26 @@
     }
   }
 
-  async function dispatchTrigger(trigger, auxiliaryTriggers = []) {
+  async function dispatchTrigger(trigger, auxiliaryTriggers = [], options = {}) {
     if (!available) {
-      return;
+      return null;
     }
     try {
       await flushCueSync();
+      const requestPayload = buildControlTriggerPayload(trigger, auxiliaryTriggers, options);
       const payload = await requestJson("api/control/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger, auxiliaryTriggers }),
+        body: JSON.stringify(requestPayload),
       });
       publishControlState(payload.state);
       if (payload.lighting && payload.lighting.runtime) {
         applyRuntimeStatus(payload.lighting.runtime);
       }
+      return payload;
     } catch (error) {
       if (!dirty) setStatus(error.message || "LIGHTING TRIGGER FAILED", "error");
+      return null;
     }
   }
 
@@ -1344,6 +1385,7 @@
   async function initialize(options = {}) {
     dom = queryDom();
     onControlState = options.onControlState || null;
+    onAvailabilityChange = options.onAvailabilityChange || null;
     if (!dom.fieldset) {
       return;
     }
@@ -1357,6 +1399,7 @@
       setAvailable(true);
       await loadDefinitionsAndConfig();
       await Promise.all([pollControlState(), pollRuntimeStatus()]);
+      startControlEventStream();
     } catch (error) {
       setAvailable(false);
       return;
@@ -1376,6 +1419,7 @@
 
   global.ProjectBluffLighting = {
     addFixtureToConfig,
+    buildControlTriggerPayload,
     buildStageTriggers,
     canApplySharedConfig,
     clearProgramState,

@@ -20,14 +20,25 @@ from fixture_definitions import (
 )
 
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 TRIGGER_KEYS = ("setup", "day", "nominations", "night", "stopAll")
 OSC_AUXILIARY_TRIGGER_KEYS = ("bells", "maleScream", "femaleScream")
-OSC_TRIGGER_KEYS = (*TRIGGER_KEYS, *OSC_AUXILIARY_TRIGGER_KEYS)
+OSC_PHASE_TRIGGER_KEYS = ("nomination", "beginVoting")
+OSC_TRIGGER_KEYS = (
+    "setup",
+    "day",
+    "nominations",
+    *OSC_PHASE_TRIGGER_KEYS,
+    "night",
+    "stopAll",
+    *OSC_AUXILIARY_TRIGGER_KEYS,
+)
 TRIGGER_LABELS = {
     "setup": "SETUP",
     "day": "DAY",
-    "nominations": "NOMINATIONS",
+    "nominations": "GROUP DISCUSSION",
+    "nomination": "NOMINATION",
+    "beginVoting": "BEGIN VOTING",
     "night": "NIGHT",
     "stopAll": "STOP ALL",
     "bells": "BELLS",
@@ -74,10 +85,10 @@ def default_osc_config() -> dict[str, Any]:
 
 
 def _upgrade_legacy_config(payload: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade version 1/2 Art-Net configurations without changing show data."""
+    """Upgrade version 1-3 configurations without changing existing show data."""
 
     version = payload.get("version")
-    if isinstance(version, bool) or version not in {1, 2}:
+    if isinstance(version, bool) or version not in {1, 2, 3}:
         return payload
     upgraded = copy.deepcopy(payload)
     if version == 1:
@@ -89,9 +100,16 @@ def _upgrade_legacy_config(payload: dict[str, Any]) -> dict[str, Any]:
                         profile_type: default_fixture_cue_state()
                         for profile_type in FIXTURE_DEFINITIONS
                     }
+    if version in {1, 2}:
+        upgraded["outputMode"] = "artnet"
+        upgraded["osc"] = default_osc_config()
+    else:
+        osc = upgraded.get("osc")
+        messages = osc.get("messages") if isinstance(osc, dict) else None
+        if isinstance(messages, dict):
+            for trigger in OSC_PHASE_TRIGGER_KEYS:
+                messages.setdefault(trigger, "")
     upgraded["version"] = CONFIG_VERSION
-    upgraded["outputMode"] = "artnet"
-    upgraded["osc"] = default_osc_config()
     return upgraded
 
 
@@ -436,7 +454,7 @@ def _validate_cues(
         errors["cues"] = "Cues must be an object."
         payload = {}
     if set(payload) != set(TRIGGER_KEYS):
-        errors["cues"] = "Cues must contain exactly Setup, Day, Nominations, Night, and Stop All."
+        errors["cues"] = "Cues must contain exactly Setup, Day, Group Discussion, Night, and Stop All."
 
     fixture_ids = [fixture["id"] for fixture in fixtures]
     normalized_cues = {}

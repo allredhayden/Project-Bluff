@@ -39,6 +39,15 @@
           >
           <span class="volume-value" data-volume-value="master">80%</span>
         </label>
+        <button
+          class="local-mute-button"
+          type="button"
+          data-local-mute
+          aria-pressed="false"
+          aria-label="Mute audio on this browser"
+        >
+          MUTE
+        </button>
       </div>
 
       <section class="stage-controls" aria-label="Game stage controls">
@@ -109,21 +118,33 @@
           </div>
         </div>
 
-        <button class="stage-button" type="button" data-stage="nominations" aria-pressed="false">
-          <span class="stage-icon stage-icon-nominations" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M10.5 3.5a2 2 0 0 1 4 0v7.1l.35-.35a2 2 0 0 1 2.83 0l2.57 2.57c.48.48.75 1.13.75 1.81V17a5 5 0 0 1-5 5h-3.3a6 6 0 0 1-4.24-1.76l-3.28-3.28a2 2 0 1 1 2.83-2.83l2.49 2.49V3.5Z"></path>
-              <path d="M14.5 10.6V14"></path>
-              <path d="M17 10.5V14"></path>
-              <path d="M10.5 16.6V3.5"></path>
-            </svg>
-          </span>
-          <span class="stage-name">NOMINATIONS</span>
-          <span class="stage-timer" data-stage-timer="nominations"></span>
-          <span class="stage-loop-meter" data-loop-meter="nominations" aria-hidden="true">
-            <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
-          </span>
-        </button>
+        <div class="group-discussion-cue-group">
+          <button class="stage-button" type="button" data-stage="nominations" aria-pressed="false">
+            <span class="stage-icon stage-icon-nominations" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M10.5 3.5a2 2 0 0 1 4 0v7.1l.35-.35a2 2 0 0 1 2.83 0l2.57 2.57c.48.48.75 1.13.75 1.81V17a5 5 0 0 1-5 5h-3.3a6 6 0 0 1-4.24-1.76l-3.28-3.28a2 2 0 1 1 2.83-2.83l2.49 2.49V3.5Z"></path>
+                <path d="M14.5 10.6V14"></path>
+                <path d="M17 10.5V14"></path>
+                <path d="M10.5 16.6V3.5"></path>
+              </svg>
+            </span>
+            <span class="stage-name">GROUP DISCUSSION</span>
+            <span class="stage-timer" data-stage-timer="nominations"></span>
+            <span class="stage-loop-meter" data-loop-meter="nominations" aria-hidden="true">
+              <span class="stage-loop-meter-fill" data-loop-meter-fill></span>
+            </span>
+          </button>
+          <button
+            class="nomination-phase-button"
+            type="button"
+            data-nomination-phase
+            aria-pressed="false"
+            aria-label="Nomination controls are available during Group Discussion"
+            disabled
+          >
+            NOMINATION
+          </button>
+        </div>
 
         <button class="stage-button" type="button" data-stage="night" aria-pressed="false">
           <span class="stage-icon" aria-hidden="true">

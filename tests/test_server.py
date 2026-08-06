@@ -1,4 +1,6 @@
 import copy
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -9,6 +11,10 @@ from lighting_config import (
     default_fixture_cue_state,
 )
 from server import ControlState, create_app
+
+
+def state_without_elapsed(state):
+    return {key: value for key, value in state.items() if key != "elapsedMs"}
 
 
 def config_with_fixture():
@@ -115,6 +121,16 @@ class FakeOscSender:
         return {"lastAttempt": last, "packetsSent": len(self.calls), "delivery": "not acknowledged"}
 
 
+class ErrorOscSender(FakeOscSender):
+    def send(self, host, port, message):
+        self.calls.append((host, port, message))
+        return {
+            "status": "error",
+            "attemptedAt": "2026-08-06T00:00:00Z",
+            "message": "Local OSC send failed: test failure",
+        }
+
+
 @pytest.fixture
 def app_bundle(tmp_path):
     runtime = FakeRuntime()
@@ -146,6 +162,13 @@ def test_fixture_definitions_are_fixed_to_the_two_supported_pars(app_bundle):
     assert [definition["shortName"] for definition in payload["fixtures"]] == ["7x18 PAR", "18x18 PAR"]
     assert [trigger["id"] for trigger in payload["triggers"]] == [
         "setup", "day", "nominations", "night", "stopAll",
+    ]
+    assert [trigger["label"] for trigger in payload["triggers"]] == [
+        "SETUP", "DAY", "GROUP DISCUSSION", "NIGHT", "STOP ALL",
+    ]
+    assert [trigger["id"] for trigger in payload["oscTriggers"]] == [
+        "setup", "day", "nominations", "nomination", "beginVoting",
+        "night", "stopAll", "bells", "maleScream", "femaleScream",
     ]
     seven, eighteen = payload["fixtures"]
     seven_channels = {parameter["key"]: parameter["channel"] for parameter in seven["parameters"]}
@@ -232,12 +255,84 @@ def test_trigger_updates_shared_stage_even_when_lighting_is_disarmed(app_bundle)
     payload = response.get_json()
     assert payload["lighting"]["status"] == "skipped"
     assert payload["state"]["currentStage"] == "day"
+    assert payload["state"]["nominationPhase"] is None
+    assert payload["state"]["cueRevision"] == 1
+    assert payload["state"]["audioEvents"] == []
+    assert payload["state"]["loopOffset"] == 0.0
     assert runtime.calls == []
     with app.test_client() as second_client:
-        assert second_client.get("/api/control/state").get_json() == payload["state"]
+        remote_state = second_client.get("/api/control/state").get_json()
+        assert state_without_elapsed(remote_state) == state_without_elapsed(payload["state"])
+        assert remote_state["elapsedMs"] >= payload["state"]["elapsedMs"]
         stopped = second_client.post("/api/control/trigger", json={"trigger": "stopAll"}).get_json()
     assert stopped["state"]["currentStage"] is None
+    assert stopped["state"]["nominationPhase"] is None
     assert runtime.calls == []
+
+
+def test_shared_audio_metadata_tracks_exact_day_events_loop_offset_and_server_elapsed(app_bundle):
+    _, client, _ = app_bundle
+    day = client.post("/api/control/trigger", json={
+        "trigger": "day",
+        "auxiliaryTriggers": ["bells", "femaleScream"],
+        "loopOffset": 91.25,
+    }).get_json()["state"]
+    assert day["cueRevision"] == 1
+    assert day["audioEvents"] == ["bells", "femaleScream"]
+    assert day["loopOffset"] == 91.25
+    assert day["elapsedMs"] >= 0
+
+    time.sleep(0.012)
+    later = client.get("/api/control/state").get_json()
+    assert later["cueRevision"] == day["cueRevision"]
+    assert later["elapsedMs"] >= day["elapsedMs"] + 5
+
+    group = client.post("/api/control/trigger", json={"trigger": "nominations"}).get_json()["state"]
+    assert group["cueRevision"] == 2
+    assert group["audioEvents"] == []
+    assert group["loopOffset"] is None
+    nomination = client.post("/api/control/trigger", json={"trigger": "nomination"}).get_json()["state"]
+    assert nomination["cueRevision"] == group["cueRevision"]
+    assert nomination["startedAt"] == group["startedAt"]
+    assert nomination["audioEvents"] == []
+
+    stopped = client.post("/api/control/trigger", json={"trigger": "stopAll"}).get_json()["state"]
+    assert stopped["cueRevision"] == 3
+    assert stopped["currentStage"] is None
+    assert stopped["audioEvents"] == []
+    assert stopped["loopOffset"] is None
+
+
+def test_control_state_wait_and_event_stream_push_revisions(app_bundle):
+    app, client, _ = app_bundle
+    state = app.extensions["project_bluff_control_state"]
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        waiting = executor.submit(state.wait_for_revision, 0, 1.0)
+        time.sleep(0.01)
+        client.post("/api/control/trigger", json={"trigger": "night"})
+        pushed = waiting.result(timeout=1.0)
+    assert pushed["revision"] == 1
+    assert pushed["currentStage"] == "night"
+
+    stream = client.get("/api/control/events?afterRevision=-1", buffered=False)
+    first_event = next(stream.response).decode("utf-8")
+    stream.close()
+    assert stream.mimetype == "text/event-stream"
+    assert "event: control" in first_event
+    assert f"id: {pushed['sessionId']}:1" in first_event
+    assert '"currentStage":"night"' in first_event
+    assert "no-store" in stream.headers["Cache-Control"]
+
+    restarted_stream = client.get(
+        "/api/control/events",
+        headers={"Last-Event-ID": "previous-server:999"},
+        buffered=False,
+    )
+    restarted_event = next(restarted_stream.response).decode("utf-8")
+    restarted_stream.close()
+    assert f"id: {pushed['sessionId']}:1" in restarted_event
+    assert client.get("/api/control/events?afterRevision=bad").status_code == 400
 
 
 def test_preview_fires_only_lighting_and_does_not_change_shared_stage(app_bundle):
@@ -256,7 +351,51 @@ def test_trigger_and_preview_reject_unknown_or_extra_fields(app_bundle):
     _, client, runtime = app_bundle
     assert client.post("/api/control/trigger", json={"trigger": "bells"}).status_code == 400
     assert client.post("/api/control/trigger", json={"trigger": "day", "host": "bad"}).status_code == 400
+    assert client.post("/api/control/trigger", json={
+        "trigger": "nomination", "auxiliaryTriggers": [],
+    }).status_code == 400
+    assert client.post("/api/control/trigger", json={
+        "trigger": "day", "loopOffset": -0.1,
+    }).status_code == 400
+    assert client.post("/api/control/trigger", json={
+        "trigger": "day", "loopOffset": True,
+    }).status_code == 400
+    assert client.post("/api/control/trigger", json={
+        "trigger": "night", "loopOffset": 4,
+    }).status_code == 400
     assert client.post("/api/lighting/preview", data={"trigger": "day"}).status_code == 400
+    assert runtime.calls == []
+
+
+def test_nomination_phase_sequence_is_shared_and_resets_with_the_stage(app_bundle):
+    app, client, runtime = app_bundle
+    initial = client.get("/api/control/state").get_json()
+    assert initial["currentStage"] is None
+    assert initial["nominationPhase"] is None
+
+    assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 409
+    group = client.post("/api/control/trigger", json={"trigger": "nominations"}).get_json()
+    assert group["state"]["currentStage"] == "nominations"
+    assert group["state"]["nominationPhase"] == "ready"
+
+    nomination = client.post("/api/control/trigger", json={"trigger": "nomination"})
+    assert nomination.status_code == 200
+    assert nomination.get_json()["state"]["nominationPhase"] == "nomination"
+    revision = nomination.get_json()["state"]["revision"]
+    repeated = client.post("/api/control/trigger", json={"trigger": "nomination"})
+    assert repeated.status_code == 409
+    assert client.get("/api/control/state").get_json()["revision"] == revision
+
+    with app.test_client() as second_client:
+        assert second_client.get("/api/control/state").get_json()["nominationPhase"] == "nomination"
+        voting = second_client.post("/api/control/trigger", json={"trigger": "beginVoting"})
+    assert voting.status_code == 200
+    assert voting.get_json()["state"]["nominationPhase"] == "ready"
+    assert client.post("/api/control/trigger", json={"trigger": "beginVoting"}).status_code == 409
+
+    night = client.post("/api/control/trigger", json={"trigger": "night"}).get_json()
+    assert night["state"]["nominationPhase"] is None
+    assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 409
     assert runtime.calls == []
 
 
@@ -297,7 +436,102 @@ def test_osc_mode_routes_primary_and_actual_day_auxiliaries_in_order(tmp_path):
     preview = client.post("/api/lighting/preview", json={"trigger": "femaleScream"})
     assert preview.status_code == 200
     assert osc_sender.calls[-1][2] == "/cue/FEMALE/start"
-    assert client.get("/api/control/state").get_json() == before
+    after = client.get("/api/control/state").get_json()
+    assert state_without_elapsed(after) == state_without_elapsed(before)
+    assert after["elapsedMs"] >= before["elapsedMs"]
+
+
+def test_osc_mode_routes_group_nomination_and_voting_as_independent_events(tmp_path):
+    runtime = FakeRuntime()
+    osc_sender = FakeOscSender()
+    app = create_app(tmp_path / "lighting.json", runtime, ControlState(), osc_sender)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    config = default_config()
+    config["outputMode"] = "osc"
+    config["osc"]["messages"].update(
+        nominations="/cue/GROUP/start",
+        nomination='/cue/NOMINATION/start "phase one"',
+        beginVoting="/cue/VOTING/start",
+    )
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
+
+    group = client.post("/api/control/trigger", json={"trigger": "nominations"})
+    nomination = client.post("/api/control/trigger", json={"trigger": "nomination"})
+    voting = client.post("/api/control/trigger", json={"trigger": "beginVoting"})
+
+    assert [response.status_code for response in (group, nomination, voting)] == [200, 200, 200]
+    assert nomination.get_json()["state"]["nominationPhase"] == "nomination"
+    assert voting.get_json()["state"]["nominationPhase"] == "ready"
+    assert [call[2] for call in osc_sender.calls] == [
+        "/cue/GROUP/start",
+        '/cue/NOMINATION/start "phase one"',
+        "/cue/VOTING/start",
+    ]
+    assert runtime.calls == []
+
+
+def test_artnet_nomination_phase_does_not_disturb_the_group_discussion_look(tmp_path):
+    runtime = FakeRuntime()
+    app = create_app(tmp_path / "lighting.json", runtime, ControlState())
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    config = config_with_fixture()
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
+
+    assert client.post("/api/control/trigger", json={"trigger": "nominations"}).status_code == 200
+    assert client.post("/api/control/trigger", json={"trigger": "nomination"}).status_code == 200
+    assert client.post("/api/control/trigger", json={"trigger": "beginVoting"}).status_code == 200
+
+    assert runtime.calls == ["nominations"]
+    assert client.get("/api/lighting/status").get_json()["activeTrigger"] == "nominations"
+
+
+def test_nomination_phase_updates_even_when_osc_delivery_fails(tmp_path):
+    runtime = FakeRuntime()
+    osc_sender = ErrorOscSender()
+    app = create_app(tmp_path / "lighting.json", runtime, ControlState(), osc_sender)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    config = default_config()
+    config["outputMode"] = "osc"
+    config["osc"]["messages"]["nomination"] = "/cue/NOMINATION/start"
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
+    assert client.post("/api/control/trigger", json={"trigger": "nominations"}).status_code == 200
+
+    response = client.post("/api/control/trigger", json={"trigger": "nomination"})
+    assert response.status_code == 200
+    assert response.get_json()["lighting"]["status"] == "error"
+    assert response.get_json()["state"]["nominationPhase"] == "nomination"
+
+
+def test_simultaneous_nomination_presses_emit_exactly_once(tmp_path):
+    runtime = FakeRuntime()
+    osc_sender = FakeOscSender()
+    app = create_app(tmp_path / "lighting.json", runtime, ControlState(), osc_sender)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    config = default_config()
+    config["outputMode"] = "osc"
+    config["osc"]["messages"]["nomination"] = "/cue/NOMINATION/start"
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
+    assert client.post("/api/control/trigger", json={"trigger": "nominations"}).status_code == 200
+
+    def press_nomination():
+        with app.test_client() as thread_client:
+            response = thread_client.post("/api/control/trigger", json={"trigger": "nomination"})
+            return response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = sorted(executor.map(lambda _: press_nomination(), range(2)))
+
+    assert statuses == [200, 409]
+    assert [call[2] for call in osc_sender.calls] == ["/cue/NOMINATION/start"]
+    assert client.get("/api/control/state").get_json()["nominationPhase"] == "nomination"
 
 
 def test_armed_osc_allows_message_edits_but_locks_mode_and_destination(tmp_path):

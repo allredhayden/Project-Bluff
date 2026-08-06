@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v18";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v20";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -58,13 +58,14 @@ const SOUND_FILES = {
 };
 
 const VOLUME_STORAGE_KEY = "project-bluff-volume-settings-v1";
+const LOCAL_MUTE_STORAGE_KEY = "project-bluff-local-muted-v1";
 const CUE_TIMER_UPDATE_MS = 250;
 const VOLUME_DEFAULTS_VERSION = 2;
 
 const STAGES = {
   setup: "SETUP",
   day: "DAY",
-  nominations: "NOMINATIONS",
+  nominations: "GROUP DISCUSSION",
   night: "NIGHT",
 };
 
@@ -136,6 +137,7 @@ const FADE = {
 const dom = {
   masterVolumeSlider: document.querySelector('[data-volume-slider="master"]'),
   masterVolumeValue: document.querySelector('[data-volume-value="master"]'),
+  localMuteButton: document.querySelector("[data-local-mute]"),
   stageButtons: Array.from(document.querySelectorAll("[data-stage]")),
   stageTimers: Array.from(document.querySelectorAll("[data-stage-timer]")),
   stopButton: document.querySelector("[data-stop]"),
@@ -150,6 +152,7 @@ const dom = {
   loopProgressToggle: document.querySelector("[data-loop-progress-toggle]"),
   loopMeters: Array.from(document.querySelectorAll("[data-loop-meter]")),
   daySoundButtons: Array.from(document.querySelectorAll("[data-murder-sound], [data-day-sound]")),
+  nominationPhaseButton: document.querySelector("[data-nomination-phase]"),
   murderConfirmationModal: document.querySelector("[data-murder-confirmation-modal]"),
   murderConfirmationChoices: Array.from(document.querySelectorAll("[data-murder-confirmation-choice]")),
 };
@@ -165,11 +168,19 @@ let masterGain = null;
 let loadPromise = null;
 let buffers = {};
 let currentStage = null;
+let nominationPhase = null;
+let nominationRequestPending = false;
+let controlServerAvailable = false;
 let currentCueId = 0;
 let controlsBusy = false;
 let audioSessionWarningShown = false;
 let activeCueStartedAt = null;
 let activeCueTimerIntervalId = null;
+let lastSharedCueRevision = -1;
+let lastSharedSessionId = null;
+let sharedAudioRequestId = 0;
+let latestSharedAudioState = null;
+let sharedAudioPendingUnlock = false;
 
 const activeLoops = new Map();
 const activeOneShots = new Set();
@@ -180,6 +191,7 @@ const loopResumeOffsets = {
 };
 
 const volumeSettings = loadVolumeSettings();
+let localMuted = loadLocalMuted();
 
 const preloadProgress = {
   decoded: 0,
@@ -287,6 +299,46 @@ function saveVolumeSettings() {
   }
 }
 
+function loadLocalMuted() {
+  try {
+    return window.localStorage.getItem(LOCAL_MUTE_STORAGE_KEY) === "true";
+  } catch (error) {
+    console.warn("Could not load this browser's mute setting.", error);
+    return false;
+  }
+}
+
+function saveLocalMuted() {
+  try {
+    window.localStorage.setItem(LOCAL_MUTE_STORAGE_KEY, String(localMuted));
+  } catch (error) {
+    console.warn("Could not save this browser's mute setting.", error);
+  }
+}
+
+function updateLocalMuteUi() {
+  if (!dom.localMuteButton) {
+    return;
+  }
+
+  dom.localMuteButton.textContent = localMuted ? "MUTED" : "MUTE";
+  dom.localMuteButton.setAttribute("aria-pressed", String(localMuted));
+  dom.localMuteButton.setAttribute(
+    "aria-label",
+    localMuted ? "Unmute audio on this browser" : "Mute audio on this browser",
+  );
+}
+
+function setLocalMuted(isMuted, shouldSave = true) {
+  localMuted = isMuted === true;
+  updateLocalMuteUi();
+  applyMasterVolume();
+
+  if (shouldSave) {
+    saveLocalMuted();
+  }
+}
+
 function volumeToPercent(value) {
   return Math.round(clampVolume(value, 0) * 100);
 }
@@ -324,7 +376,7 @@ function applyMasterVolume() {
 
   const now = audioContext.currentTime;
   masterGain.gain.cancelScheduledValues(now);
-  masterGain.gain.setValueAtTime(volumeSettings.master, now);
+  masterGain.gain.setValueAtTime(localMuted ? 0 : volumeSettings.master, now);
 }
 
 function setMasterVolume(volume, shouldSave = true) {
@@ -607,17 +659,17 @@ async function resolveMurderCueForStage(stage) {
   return armedCue;
 }
 
-function playMurderCue(murderCue) {
+function playMurderCue(murderCue, elapsedSeconds = 0) {
   if (!murderCue) {
     return;
   }
 
   if (murderCue.maleScream) {
-    playOneShot("maleScream");
+    playOneShot("maleScream", elapsedSeconds);
   }
 
   if (murderCue.femaleScream) {
-    playOneShot("femaleScream");
+    playOneShot("femaleScream", elapsedSeconds);
   }
 }
 
@@ -639,12 +691,28 @@ function initializeMurderSoundUi() {
 
 function initializeVolumeUi() {
   setMasterVolume(volumeSettings.master, false);
+  setLocalMuted(localMuted, false);
   setLoopProgressEnabled(volumeSettings.showLoopProgress, false);
   renderTrackVolumeSettings();
 
   dom.masterVolumeSlider.addEventListener("input", () => {
     setMasterVolume(percentToVolume(dom.masterVolumeSlider.value));
   });
+
+  if (dom.localMuteButton) {
+    dom.localMuteButton.addEventListener("click", () => {
+      setLocalMuted(!localMuted);
+      ensureAudioReady()
+        .then(() => {
+          if (sharedAudioPendingUnlock && latestSharedAudioState) {
+            synchronizeSharedStageAudio(latestSharedAudioState);
+          }
+        })
+        .catch((error) => {
+          console.warn("This browser could not unlock audio playback.", error);
+        });
+    });
+  }
 
   if (dom.loopProgressToggle) {
     dom.loopProgressToggle.addEventListener("change", () => {
@@ -706,6 +774,37 @@ function resetPreloadProgress() {
   setPreloadProgress(0);
 }
 
+function updateNominationPhaseControl() {
+  if (!dom.nominationPhaseButton) {
+    return;
+  }
+  const nominationActive = nominationPhase === "nomination";
+  dom.nominationPhaseButton.textContent = nominationActive ? "BEGIN VOTING" : "NOMINATION";
+  dom.nominationPhaseButton.setAttribute("aria-pressed", String(nominationActive));
+  dom.nominationPhaseButton.setAttribute(
+    "aria-label",
+    nominationActive
+      ? "Nomination active; begin voting"
+      : "Start nomination",
+  );
+  dom.nominationPhaseButton.disabled = (
+    controlsBusy
+    || nominationRequestPending
+    || !controlServerAvailable
+    || currentStage !== "nominations"
+  );
+}
+
+function setNominationPhase(phase) {
+  nominationPhase = phase;
+  updateNominationPhaseControl();
+}
+
+function setControlServerAvailable(isAvailable) {
+  controlServerAvailable = isAvailable === true;
+  updateNominationPhaseControl();
+}
+
 function setControlsBusy(isBusy) {
   controlsBusy = isBusy;
   dom.stageButtons.forEach((button) => {
@@ -714,6 +813,7 @@ function setControlsBusy(isBusy) {
   dom.daySoundButtons.forEach((button) => {
     button.disabled = isBusy;
   });
+  updateNominationPhaseControl();
 }
 
 function formatCueElapsed(elapsedMs) {
@@ -751,11 +851,8 @@ function updateCueTimersDisplay() {
   });
 }
 
-function startActiveCueTimer(startedAt = null) {
-  const serverStartTime = startedAt ? Date.parse(startedAt) : NaN;
-  const elapsedBeforeThisPage = Number.isFinite(serverStartTime)
-    ? Math.max(0, Date.now() - serverStartTime)
-    : 0;
+function startActiveCueTimer(elapsedMs = 0) {
+  const elapsedBeforeThisPage = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
   activeCueStartedAt = performance.now() - elapsedBeforeThisPage;
   updateCueTimersDisplay();
 
@@ -775,8 +872,13 @@ function stopActiveCueTimer() {
   clearCueTimersDisplay();
 }
 
-function setCurrentStage(stage, startedAt = null) {
+function setCurrentStage(stage, elapsedMs = 0) {
   currentStage = stage;
+  if (stage !== "nominations") {
+    nominationPhase = null;
+  } else if (nominationPhase === null) {
+    nominationPhase = "ready";
+  }
   dom.activeStage.textContent = stage ? STAGES[stage] : "Idle";
 
   dom.stageButtons.forEach((button) => {
@@ -785,10 +887,11 @@ function setCurrentStage(stage, startedAt = null) {
   });
 
   if (stage) {
-    startActiveCueTimer(startedAt);
+    startActiveCueTimer(elapsedMs);
   } else {
     stopActiveCueTimer();
   }
+  updateNominationPhaseControl();
 }
 
 function setLoopMeterProgress(id, progress) {
@@ -932,7 +1035,7 @@ function makeAudioContext() {
   if (!audioContext) {
     audioContext = new AudioContextClass();
     masterGain = audioContext.createGain();
-    masterGain.gain.value = volumeSettings.master;
+    masterGain.gain.value = localMuted ? 0 : volumeSettings.master;
     masterGain.connect(audioContext.destination);
   }
 
@@ -981,10 +1084,18 @@ async function ensureAudioReady() {
   configurePlaybackSession();
   const context = makeAudioContext();
 
+  if (context.state === "suspended") {
+    await context.resume();
+  }
+
   await queueBufferLoad();
 
   if (context.state === "suspended") {
     await context.resume();
+  }
+
+  if (context.state !== "running") {
+    throw new Error("Audio is waiting for a tap on this browser.");
   }
 }
 
@@ -1204,13 +1315,19 @@ function rampTrackGain(track, endValue, duration, atTime = audioContext.currentT
   track.gain.gain.linearRampToValueAtTime(endValue, atTime + duration);
 }
 
-function playOneShot(id) {
+function playOneShot(id, elapsedSeconds = 0) {
   const config = ONE_SHOTS[id];
   const buffer = buffers[config.file];
+  const elapsed = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
+  const offset = clampTime(config.offset + elapsed, buffer, 0);
+  const duration = Math.max(0, buffer.duration - offset);
+
+  if (duration <= 0) {
+    return null;
+  }
+
   const source = audioContext.createBufferSource();
   const gain = audioContext.createGain();
-  const offset = clampTime(config.offset, buffer, 0);
-  const duration = Math.max(0, buffer.duration - offset);
   const track = { id, fileKey: config.file, source, gain, type: "oneShot" };
 
   source.buffer = buffer;
@@ -1237,12 +1354,18 @@ function startLoop(id, options = {}) {
   const gain = audioContext.createGain();
   const now = audioContext.currentTime;
   const fadeIn = config.fadeIn || 0;
+  const syncElapsed = Number.isFinite(options.syncElapsed)
+    ? Math.max(0, options.syncElapsed)
+    : 0;
   const { loopStart, loopEnd } = getLoopBounds(config, buffer);
-  const configuredOffset = RESUMABLE_LOOPS.has(id) ? loopResumeOffsets[id] : config.offset;
+  const configuredOffset = Number.isFinite(options.baseOffset)
+    ? options.baseOffset
+    : (RESUMABLE_LOOPS.has(id) ? loopResumeOffsets[id] : config.offset);
   const clampedOffset = clampTime(configuredOffset, buffer, loopStart);
-  const startOffset = RESUMABLE_LOOPS.has(id)
-    ? normalizeLoopOffset(clampedOffset, loopStart, loopEnd)
-    : clampedOffset;
+  const elapsedOffset = clampedOffset + syncElapsed;
+  const startOffset = elapsedOffset < loopEnd
+    ? elapsedOffset
+    : normalizeLoopOffset(elapsedOffset, loopStart, loopEnd);
   const track = {
     id,
     fileKey: config.file,
@@ -1262,9 +1385,11 @@ function startLoop(id, options = {}) {
 
   connectSource(source, gain);
 
-  if (fadeIn > 0) {
-    setTrackGain(track, 0, now);
-    rampTrackGain(track, getTrackTargetGain(track), fadeIn, now);
+  if (fadeIn > 0 && syncElapsed < fadeIn) {
+    const targetGain = getTrackTargetGain(track);
+    const fadeProgress = syncElapsed / fadeIn;
+    setTrackGain(track, targetGain * fadeProgress, now);
+    rampTrackGain(track, targetGain, fadeIn - syncElapsed, now);
   } else {
     setTrackGain(track, getTrackTargetGain(track), now);
   }
@@ -1308,6 +1433,12 @@ function scheduleStop(track, duration) {
 
 function fadeOutTrack(track, duration = FADE.stage) {
   if (!track || track.stopping) {
+    return;
+  }
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    track.stopping = true;
+    stopSource(track);
     return;
   }
 
@@ -1362,120 +1493,265 @@ function stopLoopNow(id) {
   }
 }
 
-function beginCue(stage) {
+function normalizedCueElapsed(sync = {}) {
+  return Number.isFinite(sync.elapsedSeconds) ? Math.max(0, sync.elapsedSeconds) : 0;
+}
+
+function remainingCueTime(totalSeconds, elapsedSeconds) {
+  return Math.max(0, totalSeconds - elapsedSeconds);
+}
+
+function scheduleSynchronizedLoop(cueId, id, delaySeconds, sync, options = {}) {
+  const elapsed = normalizedCueElapsed(sync);
+
+  if (elapsed < delaySeconds) {
+    scheduleCueTask(cueId, delaySeconds - elapsed, () => {
+      startLoop(id, { ...options, syncElapsed: 0 });
+    });
+    return;
+  }
+
+  startLoop(id, { ...options, syncElapsed: elapsed - delaySeconds });
+}
+
+function beginCue(stage, sync = {}) {
+  const elapsed = normalizedCueElapsed(sync);
   currentCueId += 1;
   clearCueTimers();
-  fadeOutOneShots();
-  setCurrentStage(stage);
+  fadeOutOneShots(remainingCueTime(0.75, elapsed));
+  setCurrentStage(stage, elapsed * 1000);
   configurePlaybackSession();
   setMediaPlaybackState("playing");
   enableStopButton();
   return currentCueId;
 }
 
-function runDayCue(murderCue = null) {
-  const cueId = beginCue("day");
+function runDayCue(audioEvents = [], sync = {}) {
+  const elapsed = normalizedCueElapsed(sync);
+  const cueId = beginCue("day", sync);
+  const murderCue = {
+    maleScream: audioEvents.includes("maleScream"),
+    femaleScream: audioEvents.includes("femaleScream"),
+  };
+  const hasMurderCue = murderCue.maleScream || murderCue.femaleScream;
 
-  if (daySoundState.bells) {
-    playOneShot("bells");
+  if (audioEvents.includes("bells")) {
+    playOneShot("bells", elapsed);
   }
 
-  playMurderCue(murderCue);
-  if (murderCue) {
+  playMurderCue(hasMurderCue ? murderCue : null, elapsed);
+  if (hasMurderCue) {
     resetArmedScreams();
   }
 
-  fadeOutOtherLoops(["day", "night"]);
+  fadeOutOtherLoops(["day", "night"], remainingCueTime(FADE.stage, elapsed));
 
-  scheduleCueTask(cueId, 1, () => {
-    fadeOutLoop("night", FADE.stage);
-    startLoop("day", { fadeIn: 3 });
-  });
+  if (elapsed < 1) {
+    scheduleCueTask(cueId, 1 - elapsed, () => {
+      fadeOutLoop("night", FADE.stage);
+      startLoop("day", { fadeIn: 3, baseOffset: sync.loopOffset, syncElapsed: 0 });
+    });
+  } else {
+    fadeOutLoop("night", remainingCueTime(FADE.stage + 1, elapsed));
+    startLoop("day", {
+      fadeIn: 3,
+      baseOffset: sync.loopOffset,
+      syncElapsed: elapsed - 1,
+    });
+  }
 
   setStatus("DAY active.");
 }
 
-function runSetupCue() {
-  beginCue("setup");
+function runSetupCue(sync = {}) {
+  const elapsed = normalizedCueElapsed(sync);
+  beginCue("setup", sync);
 
-  fadeOutOtherLoops(["setup"]);
-  startLoop("setup");
+  fadeOutOtherLoops(["setup"], remainingCueTime(FADE.stage, elapsed));
+  startLoop("setup", { syncElapsed: elapsed });
 
   setStatus("SETUP active.");
 }
 
-function runNominationsCue() {
-  const cueId = beginCue("nominations");
+function runNominationsCue(sync = {}) {
+  const elapsed = normalizedCueElapsed(sync);
+  const cueId = beginCue("nominations", sync);
 
-  fadeOutOtherLoops(["nominations"], FADE.stage);
-  playOneShot("gong");
+  fadeOutOtherLoops(["nominations"], remainingCueTime(FADE.stage, elapsed));
+  playOneShot("gong", elapsed);
 
-  scheduleCueTask(cueId, 2, () => {
-    startLoop("nominations");
-  });
+  scheduleSynchronizedLoop(cueId, "nominations", 2, sync);
 
-  setStatus("NOMINATIONS active.");
+  setStatus("GROUP DISCUSSION active.");
 }
 
-function runNightCue() {
-  const cueId = beginCue("night");
+function runNightCue(sync = {}) {
+  const elapsed = normalizedCueElapsed(sync);
+  const cueId = beginCue("night", sync);
 
-  fadeOutOtherLoops(["night", "nominations"]);
-  fadeOutLoop("nominations", FADE.stage);
-  playOneShot("nightIntro");
+  fadeOutOtherLoops(["night", "nominations"], remainingCueTime(FADE.stage, elapsed));
+  fadeOutLoop("nominations", remainingCueTime(FADE.stage, elapsed));
+  playOneShot("nightIntro", elapsed);
 
-  scheduleCueTask(cueId, 1.5, () => {
-    startLoop("night");
-  });
+  scheduleSynchronizedLoop(cueId, "night", 1.5, sync);
 
   setStatus("NIGHT active.");
 }
 
-function runStageCue(stage, murderCue = null) {
+function runStageCue(stage, audioEvents = [], sync = {}) {
   if (stage === "setup") {
-    runSetupCue();
+    runSetupCue(sync);
     return;
   }
 
   if (stage === "day") {
-    runDayCue(murderCue);
+    runDayCue(audioEvents, sync);
     return;
   }
 
   if (stage === "nominations") {
-    runNominationsCue();
+    runNominationsCue(sync);
     return;
   }
 
-  runNightCue();
+  runNightCue(sync);
 }
 
-function dispatchLightingTrigger(trigger, auxiliaryTriggers = []) {
+function dispatchLightingTrigger(trigger, auxiliaryTriggers = [], options = {}) {
   if (!window.ProjectBluffLighting) {
-    return;
+    return Promise.resolve(null);
   }
-  window.ProjectBluffLighting.dispatchTrigger(trigger, auxiliaryTriggers);
+  return window.ProjectBluffLighting.dispatchTrigger(trigger, auxiliaryTriggers, options);
+}
+
+function normalizeSharedAudioEvents(state) {
+  if (!state || !Array.isArray(state.audioEvents)) {
+    return [];
+  }
+
+  return ["bells", "maleScream", "femaleScream"].filter(
+    (eventId) => state.audioEvents.includes(eventId),
+  );
+}
+
+function getDayLoopDispatchOffset() {
+  if (!audioContext) {
+    return loopResumeOffsets.day;
+  }
+
+  const activeDayLoop = activeLoops.get("day");
+  return activeDayLoop
+    ? getTrackLoopPosition(activeDayLoop, audioContext.currentTime)
+    : loopResumeOffsets.day;
+}
+
+function applySynchronizedStop(elapsedSeconds = 0) {
+  sharedAudioRequestId += 1;
+  sharedAudioPendingUnlock = false;
+  currentCueId += 1;
+  clearCueTimers();
+
+  if (audioContext) {
+    const remainingFade = remainingCueTime(FADE.stopAll, elapsedSeconds);
+    activeLoops.forEach((track) => fadeOutTrack(track, remainingFade));
+    activeOneShots.forEach((track) => fadeOutTrack(track, remainingFade));
+  }
+
+  setCurrentStage(null);
+  setMediaPlaybackState("none");
+  setStatus("Stopped on all controllers.");
+}
+
+async function synchronizeSharedStageAudio(sharedAudioState) {
+  const requestId = ++sharedAudioRequestId;
+  latestSharedAudioState = sharedAudioState;
+  const { state, receivedAt } = sharedAudioState;
+
+  try {
+    await ensureAudioReady();
+
+    if (requestId !== sharedAudioRequestId || state.currentStage === null) {
+      return;
+    }
+
+    const deliveryElapsed = Math.max(0, performance.now() - receivedAt) / 1000;
+    const serverElapsed = Number.isFinite(state.elapsedMs) ? Math.max(0, state.elapsedMs) / 1000 : 0;
+    const elapsedSeconds = serverElapsed + deliveryElapsed;
+    sharedAudioPendingUnlock = false;
+    runStageCue(
+      state.currentStage,
+      normalizeSharedAudioEvents(state),
+      {
+        elapsedSeconds,
+        loopOffset: Number.isFinite(state.loopOffset) ? state.loopOffset : undefined,
+      },
+    );
+  } catch (error) {
+    if (requestId !== sharedAudioRequestId) {
+      return;
+    }
+    sharedAudioPendingUnlock = true;
+    console.warn("Synchronized audio is waiting for a local browser gesture.", error);
+    setStatus(`Tap MUTE once to enable ${STAGES[state.currentStage]} audio on this browser.`);
+  }
 }
 
 function applySharedControlState(state) {
-  const stage = state && state.currentStage;
-  if (stage !== null && !Object.hasOwn(STAGES, stage)) {
-    return;
-  }
-  if (stage === currentStage) {
+  if (!state || typeof state !== "object") {
     return;
   }
 
-  currentCueId += 1;
-  clearCueTimers();
-  setCurrentStage(stage, state.startedAt);
-  setMediaPlaybackState(stage ? "playing" : "none");
-  if (stage) {
-    enableStopButton();
-    setStatus(`${STAGES[stage]} active on another controller.`);
-  } else {
-    setStatus("Stopped on another controller.");
+  const stage = state.currentStage;
+  if (stage !== null && !Object.hasOwn(STAGES, stage)) {
+    return;
   }
+  const cueRevision = Number.isInteger(state.cueRevision) ? state.cueRevision : state.revision;
+  const nextSessionId = typeof state.sessionId === "string" ? state.sessionId : null;
+  const hadSharedSession = lastSharedSessionId !== null;
+  const sharedSessionChanged = nextSessionId !== null && nextSessionId !== lastSharedSessionId;
+  if (sharedSessionChanged) {
+    lastSharedSessionId = nextSessionId;
+    lastSharedCueRevision = -1;
+  }
+  const elapsedSeconds = Number.isFinite(state.elapsedMs) ? Math.max(0, state.elapsedMs) / 1000 : 0;
+  const nextNominationPhase = stage === "nominations"
+    ? (state.nominationPhase === "nomination" ? "nomination" : "ready")
+    : null;
+  const nominationPhaseChanged = nextNominationPhase !== nominationPhase;
+  const cueChanged = cueRevision !== lastSharedCueRevision;
+
+  if (!cueChanged && !nominationPhaseChanged) {
+    return;
+  }
+
+  setNominationPhase(nextNominationPhase);
+
+  if (cueChanged) {
+    lastSharedCueRevision = cueRevision;
+
+    if (cueRevision === 0 && stage === null && !(sharedSessionChanged && hadSharedSession)) {
+      return;
+    }
+
+    if (stage === null) {
+      latestSharedAudioState = null;
+      applySynchronizedStop(elapsedSeconds);
+      return;
+    }
+
+    setCurrentStage(stage, elapsedSeconds * 1000);
+    setMediaPlaybackState("playing");
+    enableStopButton();
+    setStatus(`Synchronizing ${STAGES[stage]} audio on this browser.`);
+    synchronizeSharedStageAudio({ state, receivedAt: performance.now() });
+    return;
+  }
+
+  setStatus(
+    nextNominationPhase === "nomination"
+      ? "NOMINATION active on another controller."
+      : "VOTING started on another controller.",
+  );
 }
 
 async function handleStageTap(stage) {
@@ -1507,12 +1783,50 @@ async function handleStageTap(stage) {
         femaleScream: Boolean(murderCue && murderCue.femaleScream),
       })
       : [stage];
-    runStageCue(stage, murderCue);
-    dispatchLightingTrigger(stage, lightingTriggers.slice(1));
+    const audioEvents = lightingTriggers.slice(1);
+    const loopOffset = stage === "day" ? getDayLoopDispatchOffset() : undefined;
+
+    if (!controlServerAvailable) {
+      runStageCue(stage, audioEvents, { loopOffset });
+      return;
+    }
+
+    const payload = await dispatchLightingTrigger(stage, audioEvents, { loopOffset });
+    if (!payload) {
+      setStatus("Cue was not started because the shared server did not respond.");
+    }
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Audio could not be started.");
   } finally {
+    setControlsBusy(false);
+  }
+}
+
+async function handleNominationPhaseTap() {
+  if (
+    controlsBusy
+    || nominationRequestPending
+    || !controlServerAvailable
+    || currentStage !== "nominations"
+  ) {
+    return;
+  }
+
+  const trigger = nominationPhase === "nomination" ? "beginVoting" : "nomination";
+  nominationRequestPending = true;
+  setControlsBusy(true);
+  setStatus(trigger === "nomination" ? "Starting nomination." : "Starting voting.");
+
+  try {
+    const payload = await dispatchLightingTrigger(trigger);
+    if (!payload) {
+      setStatus("Nomination control failed.");
+      return;
+    }
+    setStatus(trigger === "nomination" ? "NOMINATION active." : "VOTING started.");
+  } finally {
+    nominationRequestPending = false;
     setControlsBusy(false);
   }
 }
@@ -1523,20 +1837,23 @@ async function stopAll() {
   }
 
   setControlsBusy(true);
-  currentCueId += 1;
-  clearCueTimers();
 
   try {
     if (audioContext && audioContext.state === "suspended") {
       await audioContext.resume();
     }
 
-    activeLoops.forEach((track) => fadeOutTrack(track, FADE.stopAll));
-    activeOneShots.forEach((track) => fadeOutTrack(track, FADE.stopAll));
-    setCurrentStage(null);
-    setMediaPlaybackState("none");
     setStatus("Stopping.");
-    dispatchLightingTrigger("stopAll");
+
+    if (!controlServerAvailable) {
+      applySynchronizedStop(0);
+    } else {
+      const payload = await dispatchLightingTrigger("stopAll");
+      if (!payload) {
+        setStatus("Stop All did not reach the shared server.");
+        return;
+      }
+    }
 
     window.setTimeout(() => {
       if (!currentStage) {
@@ -1552,7 +1869,10 @@ initializeMurderSoundUi();
 initializeVolumeUi();
 
 if (window.ProjectBluffLighting) {
-  window.ProjectBluffLighting.initialize({ onControlState: applySharedControlState });
+  window.ProjectBluffLighting.initialize({
+    onControlState: applySharedControlState,
+    onAvailabilityChange: setControlServerAvailable,
+  });
 }
 
 dom.stageButtons.forEach((button) => {
@@ -1560,6 +1880,8 @@ dom.stageButtons.forEach((button) => {
     handleStageTap(button.dataset.stage);
   });
 });
+
+dom.nominationPhaseButton.addEventListener("click", handleNominationPhaseTap);
 
 dom.stopButton.addEventListener("click", stopAll);
 

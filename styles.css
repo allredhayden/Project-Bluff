@@ -58,9 +58,40 @@ button {
 
 .master-volume-rail {
   width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   border: 1px solid var(--pg-border);
   background: var(--pg-rail);
   padding: 7px 8px;
+}
+
+.local-mute-button {
+  min-width: 58px;
+  min-height: 32px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: 0;
+  padding: 6px 8px;
+  background: var(--pg-surface);
+  color: var(--pg-text-muted);
+  cursor: pointer;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.local-mute-button:active {
+  background: var(--pg-surface-strong);
+}
+
+.local-mute-button[aria-pressed="true"] {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
 }
 
 .volume-control {
@@ -238,7 +269,8 @@ h1 {
   align-content: center;
 }
 
-.day-cue-group {
+.day-cue-group,
+.group-discussion-cue-group {
   display: grid;
   gap: 4px;
 }
@@ -275,7 +307,9 @@ body.loop-progress-enabled .stage-button {
 .stop-button:focus-visible,
 .settings-button:focus-visible,
 .settings-close-button:focus-visible,
+.local-mute-button:focus-visible,
 .murder-sound-button:focus-visible,
+.nomination-phase-button:focus-visible,
 .murder-confirmation-button:focus-visible,
 .lighting-input:focus-visible,
 .lighting-arm-button:focus-visible,
@@ -429,6 +463,39 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
 .murder-sound-button:disabled {
   cursor: wait;
   opacity: 0.62;
+}
+
+.nomination-phase-button {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--pg-border);
+  border-radius: 0;
+  background: var(--pg-surface-inset);
+  color: var(--pg-text-dim);
+  cursor: pointer;
+  font-family: "Bahnschrift", "Aptos", system-ui, sans-serif;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nomination-phase-button:active {
+  background: var(--pg-surface-strong);
+}
+
+.nomination-phase-button[aria-pressed="true"] {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+  box-shadow: inset 0 -3px 0 var(--pg-orange);
+}
+
+.nomination-phase-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .transport {

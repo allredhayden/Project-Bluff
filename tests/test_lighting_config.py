@@ -30,7 +30,7 @@ def config_with_fixture(*, fixture_id="light-1", fixture_type="shehds-par-7x18-r
 
 def test_default_is_safe_and_contains_no_fixtures():
     config = default_config()
-    assert config["version"] == 3
+    assert config["version"] == 4
     assert config["outputMode"] == "artnet"
     assert config["fixtures"] == []
     assert config["artnet"] == {
@@ -141,7 +141,7 @@ def test_version_one_complete_fixture_cues_upgrade_without_changing_their_look()
 
     upgraded = normalize_config(legacy)
 
-    assert upgraded["version"] == 3
+    assert upgraded["version"] == 4
     assert upgraded["outputMode"] == "artnet"
     assert upgraded["cues"]["night"]["fixtures"]["light-1"]["values"]["blue"] == 211
     assert all(
@@ -167,14 +167,44 @@ def test_version_two_artnet_config_upgrades_losslessly():
 
     upgraded = normalize_config(legacy)
 
-    assert upgraded["version"] == 3
+    assert upgraded["version"] == 4
     assert upgraded["outputMode"] == "artnet"
     assert upgraded["artnet"] == original_artnet
     assert upgraded["fixtures"] == original_fixtures
     assert upgraded["cues"] == original_cues
 
 
-def test_osc_destination_and_all_eight_messages_are_validated():
+def test_version_three_dual_engine_config_upgrades_losslessly():
+    legacy = config_with_fixture(fixture_type="shehds-par-18x18-rgbwauv-10ch", address=11)
+    legacy["version"] = 3
+    legacy["outputMode"] = "osc"
+    legacy["artnet"]["targetHost"] = "192.168.1.255"
+    legacy["cues"]["nominations"]["fadeMs"] = 5400
+    legacy["osc"]["messages"].pop("nomination")
+    legacy["osc"]["messages"].pop("beginVoting")
+    legacy["osc"]["messages"].update(
+        setup="/cue/SETUP/start",
+        day="/cue/DAY/start",
+        nominations="/cue/GROUP/start",
+        night="/cue/NIGHT/start",
+        stopAll="/cue/BLACKOUT/start",
+    )
+    original = json.loads(json.dumps(legacy))
+
+    upgraded = normalize_config(legacy)
+
+    assert upgraded["version"] == 4
+    assert upgraded["outputMode"] == original["outputMode"]
+    assert upgraded["artnet"] == original["artnet"]
+    assert upgraded["fixtures"] == original["fixtures"]
+    assert upgraded["cues"] == original["cues"]
+    for trigger, message in original["osc"]["messages"].items():
+        assert upgraded["osc"]["messages"][trigger] == message
+    assert upgraded["osc"]["messages"]["nomination"] == ""
+    assert upgraded["osc"]["messages"]["beginVoting"] == ""
+
+
+def test_osc_destination_and_all_ten_messages_are_validated():
     config = default_config()
     config["outputMode"] = "osc"
     config["osc"]["messages"]["day"] = '/cue/DAY/start "look one"'

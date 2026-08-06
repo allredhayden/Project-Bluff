@@ -134,3 +134,31 @@ def test_osc_preview_sends_one_auxiliary_without_changing_artnet():
     assert result["status"] == "sent"
     assert osc.calls == [("127.0.0.1", 53000, "/cue/MALE/start")]
     assert artnet.calls == []
+
+
+def test_nomination_events_are_osc_only_and_obey_the_shared_arm_gate():
+    config = configured_artnet()
+    artnet = FakeArtNetRuntime()
+    osc = FakeOscSender()
+    controller = LightingOutputController(lambda: config, artnet_runtime=artnet, osc_sender=osc)
+
+    assert controller.trigger("nomination")["status"] == "skipped"
+    controller.arm()
+    assert controller.trigger("nomination")["status"] == "skipped"
+    assert artnet.calls == []
+    assert osc.calls == []
+    controller.disarm()
+
+    config["outputMode"] = "osc"
+    config["osc"]["messages"].update(
+        nomination='/cue/NOMINATION/start "phase one"',
+        beginVoting="/cue/VOTING/start",
+    )
+    controller.arm()
+    assert controller.trigger("nomination")["status"] == "sent"
+    assert controller.trigger("beginVoting")["status"] == "sent"
+    assert [call[2] for call in osc.calls] == [
+        '/cue/NOMINATION/start "phase one"',
+        "/cue/VOTING/start",
+    ]
+    assert artnet.calls == []

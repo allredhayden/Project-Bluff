@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import socket
 import threading
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from werkzeug.exceptions import BadRequest
 
 from artnet_output import LightingRuntime, LightingRuntimeError
 from fixture_definitions import public_fixture_definitions
 from lighting_config import (
     OSC_AUXILIARY_TRIGGER_KEYS,
+    OSC_PHASE_TRIGGER_KEYS,
     OSC_TRIGGER_KEYS,
     TRIGGER_KEYS,
     TRIGGER_LABELS,
@@ -30,6 +35,7 @@ from osc_sender import OscSender
 PROJECT_ROOT = Path(__file__).resolve().parent
 SOUNDS_ROOT = PROJECT_ROOT / "sounds"
 STAGE_TRIGGERS = {"setup", "day", "nominations", "night"}
+CONTROL_TRIGGER_KEYS = (*TRIGGER_KEYS, *OSC_PHASE_TRIGGER_KEYS)
 
 
 def _utc_now() -> str:
@@ -41,32 +47,91 @@ class ControlState:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
+        self._session_id = uuid.uuid4().hex
         self._revision = 0
         self._current_stage: str | None = None
+        self._nomination_phase: str | None = None
         self._started_at: str | None = None
+        self._started_monotonic: float | None = None
+        self._audio_events: tuple[str, ...] = ()
+        self._loop_offset: float | None = None
+        self._cue_revision = 0
         self._updated_at = _utc_now()
 
-    def apply(self, trigger: str) -> dict[str, Any]:
-        if trigger not in STAGE_TRIGGERS and trigger != "stopAll":
-            return self.snapshot()
+    def apply(
+        self,
+        trigger: str,
+        auxiliary_triggers: tuple[str, ...] = (),
+        loop_offset: float | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
+            if trigger in OSC_PHASE_TRIGGER_KEYS:
+                self._apply_nomination_event_locked(trigger)
+            elif trigger in STAGE_TRIGGERS or trigger == "stopAll":
+                self._current_stage = trigger if trigger in STAGE_TRIGGERS else None
+                self._nomination_phase = "ready" if trigger == "nominations" else None
+                self._started_at = _utc_now() if self._current_stage else None
+                self._started_monotonic = time.monotonic()
+                self._audio_events = auxiliary_triggers if trigger == "day" else ()
+                self._loop_offset = (
+                    loop_offset if loop_offset is not None else 0.0
+                ) if trigger == "day" else None
+                self._cue_revision += 1
+            else:
+                raise ValueError("Unknown control trigger.")
             self._revision += 1
-            self._current_stage = trigger if trigger in STAGE_TRIGGERS else None
-            self._started_at = _utc_now() if self._current_stage else None
             self._updated_at = _utc_now()
+            self._condition.notify_all()
             return self._snapshot_locked()
+
+    def _apply_nomination_event_locked(self, trigger: str) -> None:
+        if self._current_stage != "nominations":
+            raise ControlTransitionError(
+                "Nomination controls are available only during Group Discussion."
+            )
+        if trigger == "nomination":
+            if self._nomination_phase != "ready":
+                raise ControlTransitionError("A nomination is already active.")
+            self._nomination_phase = "nomination"
+            return
+        if self._nomination_phase != "nomination":
+            raise ControlTransitionError("Begin Voting requires an active nomination.")
+        self._nomination_phase = "ready"
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return self._snapshot_locked()
 
+    def wait_for_revision(self, after_revision: int, timeout: float = 20.0) -> dict[str, Any]:
+        with self._condition:
+            if self._revision <= after_revision:
+                self._condition.wait_for(
+                    lambda: self._revision > after_revision,
+                    timeout=timeout,
+                )
+            return self._snapshot_locked()
+
     def _snapshot_locked(self) -> dict[str, Any]:
+        elapsed_ms = 0
+        if self._started_monotonic is not None:
+            elapsed_ms = max(0, round((time.monotonic() - self._started_monotonic) * 1000))
         return {
+            "sessionId": self._session_id,
             "revision": self._revision,
+            "cueRevision": self._cue_revision,
             "currentStage": self._current_stage,
+            "nominationPhase": self._nomination_phase,
             "startedAt": self._started_at,
+            "elapsedMs": elapsed_ms,
+            "audioEvents": list(self._audio_events),
+            "loopOffset": self._loop_offset,
             "updatedAt": self._updated_at,
         }
+
+
+class ControlTransitionError(ValueError):
+    """Raised when a synchronized phase action is not valid in the current state."""
 
 
 def _json_body() -> dict[str, Any]:
@@ -85,13 +150,25 @@ def _error_response(message: str, status: int, field_errors: dict[str, str] | No
     return jsonify(payload), status
 
 
-def _read_control_payload() -> tuple[str, tuple[str, ...]]:
+def _read_control_payload() -> tuple[str, tuple[str, ...], float | None]:
     payload = _json_body()
-    if set(payload) not in ({"trigger"}, {"trigger", "auxiliaryTriggers"}):
-        raise BadRequest("Provide one supported trigger and optional auxiliaryTriggers.")
+    supported_shapes = (
+        {"trigger"},
+        {"trigger", "auxiliaryTriggers"},
+        {"trigger", "loopOffset"},
+        {"trigger", "auxiliaryTriggers", "loopOffset"},
+    )
+    if set(payload) not in supported_shapes:
+        raise BadRequest(
+            "Provide one supported trigger with optional auxiliaryTriggers and DAY loopOffset."
+        )
     trigger = payload.get("trigger")
-    if trigger not in TRIGGER_KEYS:
-        raise BadRequest("Provide one supported primary trigger.")
+    if trigger not in CONTROL_TRIGGER_KEYS:
+        raise BadRequest("Provide one supported control trigger.")
+    if trigger in OSC_PHASE_TRIGGER_KEYS:
+        if set(payload) != {"trigger"}:
+            raise BadRequest("Nomination events accept only one trigger.")
+        return trigger, (), None
     auxiliaries = payload.get("auxiliaryTriggers", [])
     if not isinstance(auxiliaries, list) or any(not isinstance(item, str) for item in auxiliaries):
         raise BadRequest("auxiliaryTriggers must be an array of supported event IDs.")
@@ -104,7 +181,20 @@ def _read_control_payload() -> tuple[str, tuple[str, ...]]:
     expected_order = [item for item in OSC_AUXILIARY_TRIGGER_KEYS if item in auxiliaries]
     if auxiliaries != expected_order:
         raise BadRequest("Auxiliary sound events must use Bells, Male Scream, Female Scream order.")
-    return trigger, tuple(auxiliaries)
+    loop_offset = payload.get("loopOffset")
+    if loop_offset is not None:
+        if (
+            isinstance(loop_offset, bool)
+            or not isinstance(loop_offset, (int, float))
+            or not math.isfinite(loop_offset)
+            or loop_offset < 0
+            or loop_offset > 86400
+        ):
+            raise BadRequest("loopOffset must be a finite number from 0 through 86400 seconds.")
+        if trigger != "day":
+            raise BadRequest("loopOffset is supported only with DAY.")
+        loop_offset = float(loop_offset)
+    return trigger, tuple(auxiliaries), loop_offset
 
 
 def _read_preview_payload() -> str:
@@ -148,6 +238,8 @@ def create_app(
         osc_sender=osc_sender,
     )
     shared_state = control_state or ControlState()
+    app.extensions["project_bluff_control_state"] = shared_state
+    control_dispatch_lock = threading.RLock()
     app.extensions["bluff_lighting_store"] = store
     app.extensions["bluff_lighting_runtime"] = runtime
     app.extensions["bluff_control_state"] = shared_state
@@ -260,14 +352,56 @@ def create_app(
     def get_control_state():
         return jsonify(shared_state.snapshot())
 
+    @app.get("/api/control/events")
+    def stream_control_events():
+        last_event_id = request.headers.get("Last-Event-ID")
+        current_session_id = shared_state.snapshot()["sessionId"]
+        raw_revision = request.args.get("afterRevision", "-1")
+        if last_event_id is not None:
+            event_session_id, separator, event_revision = last_event_id.rpartition(":")
+            if separator and event_session_id != current_session_id:
+                raw_revision = "-1"
+            else:
+                raw_revision = event_revision if separator else last_event_id
+        try:
+            after_revision = int(raw_revision)
+        except (TypeError, ValueError):
+            return _error_response("afterRevision must be an integer.", 400)
+        if after_revision < -1:
+            return _error_response("afterRevision must be -1 or greater.", 400)
+
+        @stream_with_context
+        def event_stream():
+            revision = after_revision
+            while True:
+                state = shared_state.wait_for_revision(revision)
+                if state["revision"] <= revision:
+                    yield ": keepalive\n\n"
+                    continue
+                revision = state["revision"]
+                payload = json.dumps(state, separators=(",", ":"))
+                event_id = f"{state['sessionId']}:{revision}"
+                yield f"id: {event_id}\nevent: control\ndata: {payload}\n\n"
+
+        return Response(
+            event_stream(),
+            mimetype="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
+        )
+
     @app.post("/api/control/trigger")
     def trigger_control():
-        trigger, auxiliary_triggers = _read_control_payload()
-        state = shared_state.apply(trigger)
-        try:
-            lighting = runtime.trigger(trigger, auxiliary_triggers)
-        except LightingRuntimeError as error:
-            lighting = {"status": "error", "message": str(error), "runtime": runtime.status()}
+        trigger, auxiliary_triggers, loop_offset = _read_control_payload()
+        with control_dispatch_lock:
+            try:
+                shared_state.apply(trigger, auxiliary_triggers, loop_offset)
+            except ControlTransitionError as error:
+                return _error_response(str(error), 409)
+            try:
+                lighting = runtime.trigger(trigger, auxiliary_triggers)
+            except LightingRuntimeError as error:
+                lighting = {"status": "error", "message": str(error), "runtime": runtime.status()}
+            state = shared_state.snapshot()
         return jsonify({"trigger": trigger, "state": state, "lighting": lighting})
 
     @app.post("/api/lighting/preview")

@@ -6,7 +6,7 @@ import threading
 from typing import Any, Callable
 
 from artnet_output import LightingRuntime, LightingRuntimeError
-from lighting_config import OSC_TRIGGER_KEYS, TRIGGER_KEYS
+from lighting_config import OSC_PHASE_TRIGGER_KEYS, OSC_TRIGGER_KEYS, TRIGGER_KEYS
 from osc_sender import OscSender
 
 
@@ -83,7 +83,7 @@ class LightingOutputController:
         trigger: str,
         auxiliary_triggers: tuple[str, ...] | list[str] = (),
     ) -> dict[str, Any]:
-        if trigger not in TRIGGER_KEYS:
+        if trigger not in (*TRIGGER_KEYS, *OSC_PHASE_TRIGGER_KEYS):
             raise LightingRuntimeError("Unknown lighting trigger.")
         with self._lock:
             if not self._armed:
@@ -95,6 +95,13 @@ class LightingOutputController:
                 }
             mode = self._armed_mode
         if mode == "artnet":
+            if trigger in OSC_PHASE_TRIGGER_KEYS:
+                return {
+                    "status": "skipped",
+                    "message": "The selected Art-Net engine has no output for this OSC-only event.",
+                    "events": [],
+                    "runtime": self.status(),
+                }
             result = self._artnet_runtime.trigger(trigger)
             result["events"] = [{"trigger": trigger, "status": result["status"]}]
             result["runtime"] = self.status()
