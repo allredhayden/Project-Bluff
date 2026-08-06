@@ -1,4 +1,4 @@
-"""Local Project Bluff server with native Art-Net lighting output."""
+"""Local Project Bluff server with mutually exclusive Art-Net or OSC output."""
 
 from __future__ import annotations
 
@@ -15,12 +15,16 @@ from werkzeug.exceptions import BadRequest
 from artnet_output import LightingRuntime, LightingRuntimeError
 from fixture_definitions import public_fixture_definitions
 from lighting_config import (
+    OSC_AUXILIARY_TRIGGER_KEYS,
+    OSC_TRIGGER_KEYS,
     TRIGGER_KEYS,
     TRIGGER_LABELS,
     LightingConfigStore,
     LightingConfigValidationError,
     normalize_config,
 )
+from lighting_output import LightingOutputController
+from osc_sender import OscSender
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -81,16 +85,43 @@ def _error_response(message: str, status: int, field_errors: dict[str, str] | No
     return jsonify(payload), status
 
 
-def _read_trigger_payload() -> str:
+def _read_control_payload() -> tuple[str, tuple[str, ...]]:
     payload = _json_body()
-    if set(payload) != {"trigger"} or payload.get("trigger") not in TRIGGER_KEYS:
-        raise BadRequest("Provide one supported trigger and no additional fields.")
+    if set(payload) not in ({"trigger"}, {"trigger", "auxiliaryTriggers"}):
+        raise BadRequest("Provide one supported trigger and optional auxiliaryTriggers.")
+    trigger = payload.get("trigger")
+    if trigger not in TRIGGER_KEYS:
+        raise BadRequest("Provide one supported primary trigger.")
+    auxiliaries = payload.get("auxiliaryTriggers", [])
+    if not isinstance(auxiliaries, list) or any(not isinstance(item, str) for item in auxiliaries):
+        raise BadRequest("auxiliaryTriggers must be an array of supported event IDs.")
+    if len(auxiliaries) != len(set(auxiliaries)):
+        raise BadRequest("auxiliaryTriggers cannot contain duplicates.")
+    if any(item not in OSC_AUXILIARY_TRIGGER_KEYS for item in auxiliaries):
+        raise BadRequest("auxiliaryTriggers contains an unsupported event ID.")
+    if auxiliaries and trigger != "day":
+        raise BadRequest("Auxiliary sound events are supported only with DAY.")
+    expected_order = [item for item in OSC_AUXILIARY_TRIGGER_KEYS if item in auxiliaries]
+    if auxiliaries != expected_order:
+        raise BadRequest("Auxiliary sound events must use Bells, Male Scream, Female Scream order.")
+    return trigger, tuple(auxiliaries)
+
+
+def _read_preview_payload() -> str:
+    payload = _json_body()
+    if set(payload) != {"trigger"} or payload.get("trigger") not in OSC_TRIGGER_KEYS:
+        raise BadRequest("Provide one supported lighting event and no additional fields.")
     return payload["trigger"]
 
 
 def _output_patch(config: dict[str, Any]) -> dict[str, Any]:
     return {
+        "outputMode": config["outputMode"],
         "artnet": config["artnet"],
+        "oscDestination": {
+            "targetHost": config["osc"]["targetHost"],
+            "targetPort": config["osc"]["targetPort"],
+        },
         "fixtures": config["fixtures"],
     }
 
@@ -99,6 +130,7 @@ def create_app(
     config_path: str | os.PathLike[str] | None = None,
     lighting_runtime: LightingRuntime | None = None,
     control_state: ControlState | None = None,
+    osc_sender: OscSender | None = None,
 ) -> Flask:
     app = Flask(__name__, static_folder=None, instance_relative_config=True)
     app.config.update(JSON_SORT_KEYS=False)
@@ -109,7 +141,12 @@ def create_app(
         or (Path(app.instance_path) / "lighting-config.json")
     )
     store = LightingConfigStore(resolved_config_path)
-    runtime = lighting_runtime or LightingRuntime(store.load)
+    artnet_runtime = lighting_runtime or LightingRuntime(store.load)
+    runtime = LightingOutputController(
+        store.load,
+        artnet_runtime=artnet_runtime,
+        osc_sender=osc_sender,
+    )
     shared_state = control_state or ControlState()
     app.extensions["bluff_lighting_store"] = store
     app.extensions["bluff_lighting_runtime"] = runtime
@@ -156,7 +193,12 @@ def create_app(
 
     @app.get("/api/health")
     def health():
-        return jsonify({"status": "ok", "service": "project-bluff", "lightingAvailable": True})
+        return jsonify({
+            "status": "ok",
+            "service": "project-bluff",
+            "lightingAvailable": True,
+            "lightingModes": ["artnet", "osc"],
+        })
 
     @app.get("/api/lighting/definitions")
     def get_lighting_definitions():
@@ -165,6 +207,10 @@ def create_app(
             "triggers": [
                 {"id": trigger, "label": TRIGGER_LABELS[trigger]}
                 for trigger in TRIGGER_KEYS
+            ],
+            "oscTriggers": [
+                {"id": trigger, "label": TRIGGER_LABELS[trigger]}
+                for trigger in OSC_TRIGGER_KEYS
             ],
         })
 
@@ -178,8 +224,8 @@ def create_app(
             normalized = normalize_config(_json_body())
             if runtime.is_armed() and _output_patch(normalized) != _output_patch(store.load()):
                 return _error_response(
-                    "While armed, only cue values and timing can change. "
-                    "Disarm lighting before changing fixtures or Art-Net output settings.",
+                    "While armed, only cue values, timing, and OSC messages can change. "
+                    "Disarm lighting before changing the engine, patch, or output destination.",
                     409,
                 )
             saved = store.save(normalized)
@@ -207,7 +253,7 @@ def create_app(
         except LightingRuntimeError as error:
             return _error_response(str(error), 400)
         except OSError as error:
-            return _error_response(f"Art-Net output could not start: {error}", 502)
+            return _error_response(f"Lighting output could not start: {error}", 502)
         return jsonify({"status": status})
 
     @app.get("/api/control/state")
@@ -216,19 +262,19 @@ def create_app(
 
     @app.post("/api/control/trigger")
     def trigger_control():
-        trigger = _read_trigger_payload()
+        trigger, auxiliary_triggers = _read_control_payload()
         state = shared_state.apply(trigger)
         try:
-            lighting = runtime.trigger(trigger)
+            lighting = runtime.trigger(trigger, auxiliary_triggers)
         except LightingRuntimeError as error:
             lighting = {"status": "error", "message": str(error), "runtime": runtime.status()}
         return jsonify({"trigger": trigger, "state": state, "lighting": lighting})
 
     @app.post("/api/lighting/preview")
     def preview_lighting():
-        trigger = _read_trigger_payload()
+        trigger = _read_preview_payload()
         try:
-            lighting = runtime.trigger(trigger)
+            lighting = runtime.preview(trigger)
         except LightingRuntimeError as error:
             return _error_response(str(error), 400)
         return jsonify({"trigger": trigger, "lighting": lighting})

@@ -90,6 +90,31 @@ class RecordingSender:
         self.closed = True
 
 
+class FakeOscSender:
+    def __init__(self):
+        self.calls = []
+
+    def send(self, host, port, message):
+        self.calls.append((host, port, message))
+        return {
+            "status": "sent",
+            "attemptedAt": "2026-08-06T00:00:00Z",
+            "address": message.split()[0],
+            "argumentCount": len(message.split()) - 1,
+            "message": "Datagram sent; receiver execution is not acknowledged.",
+        }
+
+    def status(self):
+        last = None
+        if self.calls:
+            last = {
+                "status": "sent",
+                "attemptedAt": "2026-08-06T00:00:00Z",
+                "message": "Datagram sent; receiver execution is not acknowledged.",
+            }
+        return {"lastAttempt": last, "packetsSent": len(self.calls), "delivery": "not acknowledged"}
+
+
 @pytest.fixture
 def app_bundle(tmp_path):
     runtime = FakeRuntime()
@@ -109,6 +134,7 @@ def test_static_server_health_range_and_route_whitelist(app_bundle):
     assert client.get("/sounds/../server.py").status_code == 404
     assert client.get("/api/health").get_json() == {
         "lightingAvailable": True,
+        "lightingModes": ["artnet", "osc"],
         "service": "project-bluff",
         "status": "ok",
     }
@@ -124,8 +150,8 @@ def test_fixture_definitions_are_fixed_to_the_two_supported_pars(app_bundle):
     seven, eighteen = payload["fixtures"]
     seven_channels = {parameter["key"]: parameter["channel"] for parameter in seven["parameters"]}
     eighteen_channels = {parameter["key"]: parameter["channel"] for parameter in eighteen["parameters"]}
-    assert seven_channels["red"] == 5
-    assert seven_channels["strobe"] == 2
+    assert seven_channels["red"] == 2
+    assert seven_channels["strobe"] == 8
     assert eighteen_channels["red"] == 2
     assert eighteen_channels["strobe"] == 8
 
@@ -163,7 +189,7 @@ def test_armed_config_save_allows_cue_changes_and_updates_runtime(app_bundle):
     _, client, runtime = app_bundle
     config = config_with_fixture()
     assert client.put("/api/lighting/config", json=config).status_code == 200
-    runtime.armed = True
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
     config["cues"]["night"]["fixtures"]["light-1"]["values"]["blue"] = 211
     response = client.put("/api/lighting/config", json=config)
     assert response.status_code == 200
@@ -176,12 +202,12 @@ def test_armed_config_save_rejects_fixture_or_artnet_changes(app_bundle):
     _, client, runtime = app_bundle
     config = config_with_fixture()
     assert client.put("/api/lighting/config", json=config).status_code == 200
-    runtime.armed = True
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
     changed_fixture = copy.deepcopy(config)
     changed_fixture["fixtures"][0]["address"] = 21
     fixture_response = client.put("/api/lighting/config", json=changed_fixture)
     assert fixture_response.status_code == 409
-    assert "only cue values and timing" in fixture_response.get_json()["error"]
+    assert "cue values, timing, and OSC messages" in fixture_response.get_json()["error"]
     changed_network = copy.deepcopy(config)
     changed_network["artnet"]["targetHost"] = "192.168.1.255"
     network_response = client.put("/api/lighting/config", json=changed_network)
@@ -206,16 +232,19 @@ def test_trigger_updates_shared_stage_even_when_lighting_is_disarmed(app_bundle)
     payload = response.get_json()
     assert payload["lighting"]["status"] == "skipped"
     assert payload["state"]["currentStage"] == "day"
-    assert runtime.calls == ["day"]
+    assert runtime.calls == []
     with app.test_client() as second_client:
         assert second_client.get("/api/control/state").get_json() == payload["state"]
         stopped = second_client.post("/api/control/trigger", json={"trigger": "stopAll"}).get_json()
     assert stopped["state"]["currentStage"] is None
-    assert runtime.calls == ["day", "stopAll"]
+    assert runtime.calls == []
 
 
 def test_preview_fires_only_lighting_and_does_not_change_shared_stage(app_bundle):
     _, client, runtime = app_bundle
+    config = config_with_fixture()
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
     before = client.get("/api/control/state").get_json()
     response = client.post("/api/lighting/preview", json={"trigger": "night"})
     assert response.status_code == 200
@@ -229,6 +258,88 @@ def test_trigger_and_preview_reject_unknown_or_extra_fields(app_bundle):
     assert client.post("/api/control/trigger", json={"trigger": "day", "host": "bad"}).status_code == 400
     assert client.post("/api/lighting/preview", data={"trigger": "day"}).status_code == 400
     assert runtime.calls == []
+
+
+def test_osc_mode_routes_primary_and_actual_day_auxiliaries_in_order(tmp_path):
+    runtime = FakeRuntime()
+    osc_sender = FakeOscSender()
+    app = create_app(tmp_path / "lighting.json", runtime, ControlState(), osc_sender)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    config = default_config()
+    config["outputMode"] = "osc"
+    config["osc"]["messages"].update(
+        day="/cue/DAY/start",
+        bells="/cue/BELLS/start",
+        femaleScream="/cue/FEMALE/start",
+    )
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    armed = client.post("/api/lighting/arm", json={"armed": True}).get_json()["status"]
+    assert armed["armed"] is True
+    assert armed["outputMode"] == "osc"
+
+    response = client.post("/api/control/trigger", json={
+        "trigger": "day",
+        "auxiliaryTriggers": ["bells", "femaleScream"],
+    })
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["state"]["currentStage"] == "day"
+    assert [result["trigger"] for result in payload["lighting"]["events"]] == [
+        "day", "bells", "femaleScream",
+    ]
+    assert [call[2] for call in osc_sender.calls] == [
+        "/cue/DAY/start", "/cue/BELLS/start", "/cue/FEMALE/start",
+    ]
+    assert runtime.calls == []
+
+    before = client.get("/api/control/state").get_json()
+    preview = client.post("/api/lighting/preview", json={"trigger": "femaleScream"})
+    assert preview.status_code == 200
+    assert osc_sender.calls[-1][2] == "/cue/FEMALE/start"
+    assert client.get("/api/control/state").get_json() == before
+
+
+def test_armed_osc_allows_message_edits_but_locks_mode_and_destination(tmp_path):
+    runtime = FakeRuntime()
+    osc_sender = FakeOscSender()
+    app = create_app(tmp_path / "lighting.json", runtime, ControlState(), osc_sender)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    config = default_config()
+    config["outputMode"] = "osc"
+    config["osc"]["messages"]["night"] = "/cue/NIGHT/start"
+    assert client.put("/api/lighting/config", json=config).status_code == 200
+    assert client.post("/api/lighting/arm", json={"armed": True}).status_code == 200
+
+    message_edit = copy.deepcopy(config)
+    message_edit["osc"]["messages"]["night"] = "/cue/NIGHT-NEW/start"
+    assert client.put("/api/lighting/config", json=message_edit).status_code == 200
+
+    mode_edit = copy.deepcopy(message_edit)
+    mode_edit["outputMode"] = "artnet"
+    assert client.put("/api/lighting/config", json=mode_edit).status_code == 409
+
+    destination_edit = copy.deepcopy(message_edit)
+    destination_edit["osc"]["targetPort"] = 53002
+    assert client.put("/api/lighting/config", json=destination_edit).status_code == 409
+
+    before_disarm = list(osc_sender.calls)
+    assert client.post("/api/lighting/arm", json={"armed": False}).status_code == 200
+    assert osc_sender.calls == before_disarm
+
+
+def test_day_auxiliary_payload_rejects_unknown_duplicate_or_wrong_order(app_bundle):
+    _, client, _ = app_bundle
+    assert client.post("/api/control/trigger", json={
+        "trigger": "day", "auxiliaryTriggers": ["bells", "bells"],
+    }).status_code == 400
+    assert client.post("/api/control/trigger", json={
+        "trigger": "night", "auxiliaryTriggers": ["bells"],
+    }).status_code == 400
+    assert client.post("/api/control/trigger", json={
+        "trigger": "day", "auxiliaryTriggers": ["femaleScream", "bells"],
+    }).status_code == 400
 
 
 def test_legacy_osc_routes_and_assets_are_gone(app_bundle):

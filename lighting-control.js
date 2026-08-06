@@ -15,6 +15,7 @@
   let armed = false;
   let definitions = [];
   let triggers = [];
+  let oscTriggers = [];
   let config = null;
   let selectedTrigger = "setup";
   let outputMode = "live";
@@ -141,6 +142,20 @@
     return Boolean(payload && payload.service === "project-bluff" && payload.lightingAvailable === true);
   }
 
+  function normalizeLightingEngine(value) {
+    return value === "osc" ? "osc" : "artnet";
+  }
+
+  function buildStageTriggers(stage, sounds = {}) {
+    const stageTriggers = [stage];
+    if (stage === "day") {
+      if (sounds.bells === true) stageTriggers.push("bells");
+      if (sounds.maleScream === true) stageTriggers.push("maleScream");
+      if (sounds.femaleScream === true) stageTriggers.push("femaleScream");
+    }
+    return stageTriggers;
+  }
+
   function normalizeOutputMode(value) {
     return value === "blind" ? "blind" : "live";
   }
@@ -213,10 +228,16 @@
     return {
       fieldset: document.querySelector("[data-lighting-fieldset]"),
       status: document.querySelector("[data-lighting-status]"),
+      engineButtons: Array.from(document.querySelectorAll("[data-lighting-engine]")),
+      artnetPanel: document.querySelector("[data-lighting-artnet-panel]"),
+      oscPanel: document.querySelector("[data-lighting-osc-panel]"),
       target: document.querySelector("[data-lighting-target]"),
       interfaceAddress: document.querySelector("[data-lighting-interface]"),
       portAddressBase: document.querySelector("[data-lighting-base]"),
       refreshHz: document.querySelector("[data-lighting-refresh]"),
+      oscTarget: document.querySelector("[data-lighting-osc-target]"),
+      oscPort: document.querySelector("[data-lighting-osc-port]"),
+      oscMessageList: document.querySelector("[data-lighting-osc-message-list]"),
       arm: document.querySelector("[data-lighting-arm]"),
       disarm: document.querySelector("[data-lighting-disarm]"),
       addFixture: document.querySelector("[data-lighting-add-fixture]"),
@@ -356,6 +377,68 @@
     } else {
       dom.modeStatus.textContent = `BLIND - OUTPUT FOLLOWS GAME: ${gameLabel}`;
     }
+  }
+
+  function renderLightingEngine() {
+    if (!dom || !config) {
+      return;
+    }
+    const engine = normalizeLightingEngine(config.outputMode);
+    dom.engineButtons.forEach((button) => {
+      const pressed = button.dataset.lightingEngine === engine;
+      button.setAttribute("aria-pressed", String(pressed));
+      button.disabled = !available || armed;
+    });
+    dom.artnetPanel.hidden = engine !== "artnet";
+    dom.oscPanel.hidden = engine !== "osc";
+    dom.arm.textContent = engine === "artnet" ? "Arm Art-Net" : "Arm OSC";
+    dom.disarm.textContent = engine === "artnet" ? "Disarm + Blackout" : "Disarm OSC";
+  }
+
+  function hasMappedOscMessage() {
+    return Boolean(
+      config
+      && config.osc
+      && Object.values(config.osc.messages).some((message) => message.trim() !== ""),
+    );
+  }
+
+  function renderOscMessages() {
+    if (!dom.oscMessageList || !config || !config.osc) {
+      return;
+    }
+    dom.oscMessageList.textContent = "";
+    oscTriggers.forEach((trigger) => {
+      const row = document.createElement("div");
+      const label = document.createElement("label");
+      const labelText = document.createElement("span");
+      const input = document.createElement("input");
+      const test = document.createElement("button");
+      row.className = "lighting-osc-message-row";
+      label.className = "lighting-field lighting-osc-message-field";
+      labelText.className = "lighting-field-label";
+      labelText.textContent = trigger.label;
+      input.className = "lighting-input lighting-osc-message-input";
+      input.type = "text";
+      input.value = config.osc.messages[trigger.id];
+      input.placeholder = trigger.id === "day" ? "/cue/DAY/start" : "Blank - no OSC sent";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.dataset.lightingCueControl = "";
+      input.dataset.lightingField = `osc.messages.${trigger.id}`;
+      input.addEventListener("input", () => {
+        config.osc.messages[trigger.id] = input.value;
+        markDirty();
+      });
+      label.append(labelText, input);
+      test.className = "lighting-preview-button lighting-osc-test-button";
+      test.type = "button";
+      test.textContent = "SEND TEST";
+      test.dataset.lightingOscTest = trigger.id;
+      test.addEventListener("click", () => previewTrigger(trigger.id));
+      row.append(label, test);
+      dom.oscMessageList.append(row);
+    });
   }
 
   function createField(labelText, value, options = {}) {
@@ -813,9 +896,13 @@
     dom.interfaceAddress.value = config.artnet.interfaceAddress;
     dom.portAddressBase.value = String(config.artnet.portAddressBase);
     dom.refreshHz.value = String(config.artnet.refreshHz);
+    dom.oscTarget.value = config.osc.targetHost;
+    dom.oscPort.value = String(config.osc.targetPort);
     renderFixtures();
     renderCue();
+    renderOscMessages();
     saving = false;
+    renderLightingEngine();
     renderOutputMode();
     updateControlAvailability();
   }
@@ -844,16 +931,47 @@
     document.querySelectorAll("[data-lighting-cue-control]").forEach((node) => {
       node.disabled = !available || node.dataset.lightingProgrammingDisabled === "true";
     });
-    [dom.target, dom.interfaceAddress, dom.portAddressBase, dom.refreshHz].forEach((node) => {
+    [
+      dom.target,
+      dom.interfaceAddress,
+      dom.portAddressBase,
+      dom.refreshHz,
+      dom.oscTarget,
+      dom.oscPort,
+    ].forEach((node) => {
       if (node) node.disabled = !available || armed;
     });
     dom.addFixture.disabled = !available || armed;
+    dom.engineButtons.forEach((button) => {
+      button.disabled = !available || armed;
+    });
+    const engineLabel = config && config.outputMode === "osc" ? "OSC" : "Lighting";
     dom.save.textContent = saving
-      ? "Saving Lighting"
-      : (dirty ? "Save Lighting" : "Lighting Saved");
+      ? `Saving ${engineLabel}`
+      : (dirty ? `Save ${engineLabel}` : `${engineLabel} Saved`);
     dom.save.disabled = !available || saving || !dirty;
-    dom.arm.disabled = !available || armed || dirty || !config || config.fixtures.length === 0;
+    const canArmConfiguredEngine = Boolean(
+      config
+      && (
+        (config.outputMode === "artnet" && config.fixtures.length > 0)
+        || (config.outputMode === "osc" && hasMappedOscMessage())
+      )
+    );
+    dom.arm.disabled = !available || armed || dirty || !canArmConfiguredEngine;
     dom.disarm.disabled = !available || !armed;
+    document.querySelectorAll("[data-lighting-osc-test]").forEach((button) => {
+      const trigger = button.dataset.lightingOscTest;
+      button.disabled = (
+        !available
+        || !armed
+        || dirty
+        || saving
+        || !config
+        || config.outputMode !== "osc"
+        || !config.osc.messages[trigger]
+      );
+    });
+    renderLightingEngine();
     renderOutputMode();
   }
 
@@ -862,6 +980,8 @@
     config.artnet.interfaceAddress = dom.interfaceAddress.value;
     config.artnet.portAddressBase = Number(dom.portAddressBase.value);
     config.artnet.refreshHz = Number(dom.refreshHz.value);
+    config.osc.targetHost = dom.oscTarget.value;
+    config.osc.targetPort = Number(dom.oscPort.value);
     config.cues[selectedTrigger].fadeMs = Math.round(Number(dom.fadeTime.value) * 1000);
   }
 
@@ -872,6 +992,7 @@
     ]);
     definitions = definitionPayload.fixtures;
     triggers = definitionPayload.triggers;
+    oscTriggers = definitionPayload.oscTriggers;
     applyConfig(nextConfig);
   }
 
@@ -900,7 +1021,11 @@
           renderAll();
         }
         setStatus(
-          statusMessage || (armed ? "LIVE LIGHTING CHANGE SAVED" : "LIGHTING SAVED - READY TO ARM"),
+          statusMessage || (
+            config.outputMode === "osc"
+              ? (armed ? "OSC MESSAGES SAVED" : "OSC SAVED - READY TO ARM")
+              : (armed ? "LIVE LIGHTING CHANGE SAVED" : "LIGHTING SAVED - READY TO ARM")
+          ),
           "success",
         );
       }
@@ -919,7 +1044,7 @@
     if (!available || !config) {
       return;
     }
-    if (armed) {
+    if (armed && config.outputMode === "artnet") {
       pendingCueTriggers.add(selectedTrigger);
       await flushCueSync();
       return;
@@ -933,8 +1058,13 @@
       if (status && status.lastError) {
         setStatus(status.lastError.toUpperCase(), "error");
       } else if (armed) {
-        const cue = status.activeTrigger ? ` - ${status.activeTrigger.toUpperCase()}` : " - HOME";
-        setStatus(`ART-NET ARMED${cue}`, "success");
+        if (status.outputMode === "osc") {
+          const cue = status.activeTrigger ? ` - ${status.activeTrigger.toUpperCase()}` : "";
+          setStatus(`OSC ARMED${cue}`, "success");
+        } else {
+          const cue = status.activeTrigger ? ` - ${status.activeTrigger.toUpperCase()}` : " - HOME";
+          setStatus(`ART-NET ARMED${cue}`, "success");
+        }
       } else {
         setStatus("LIGHTING DISARMED", "warning");
       }
@@ -946,7 +1076,13 @@
     if (!available || dirty) {
       return;
     }
-    setStatus(nextArmed ? "ARMING ART-NET" : "DISARMING AND BLACKING OUT", "warning");
+    const isOsc = config && config.outputMode === "osc";
+    setStatus(
+      nextArmed
+        ? `ARMING ${isOsc ? "OSC" : "ART-NET"}`
+        : (isOsc ? "DISARMING OSC" : "DISARMING AND BLACKING OUT"),
+      "warning",
+    );
     try {
       const payload = await requestJson("api/lighting/arm", {
         method: "POST",
@@ -960,7 +1096,11 @@
   }
 
   async function previewTrigger(trigger) {
-    if (!available || !armed || dirty || !config || !config.cues[trigger]) {
+    const knownEvent = config && (
+      Object.hasOwn(config.cues, trigger)
+      || Object.hasOwn(config.osc.messages, trigger)
+    );
+    if (!available || !armed || dirty || !knownEvent) {
       return false;
     }
     try {
@@ -1019,6 +1159,9 @@
   }
 
   function scheduleCueSync(trigger) {
+    if (!config || config.outputMode !== "artnet") {
+      return;
+    }
     pendingCueTriggers.add(trigger);
     if (cueSyncTimerId !== null) {
       global.clearTimeout(cueSyncTimerId);
@@ -1038,7 +1181,7 @@
   }
 
   async function recallTriggerAfterSync(trigger) {
-    if (!armed) {
+    if (!armed || !config || config.outputMode !== "artnet") {
       return;
     }
     await flushCueSync();
@@ -1056,7 +1199,7 @@
     outputMode = normalizedMode;
     renderTriggerTabs();
     renderOutputMode();
-    if (!armed) {
+    if (!armed || !config || config.outputMode !== "artnet") {
       return;
     }
     await flushCueSync();
@@ -1126,7 +1269,7 @@
     }
   }
 
-  async function dispatchTrigger(trigger) {
+  async function dispatchTrigger(trigger, auxiliaryTriggers = []) {
     if (!available) {
       return;
     }
@@ -1135,7 +1278,7 @@
       const payload = await requestJson("api/control/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger }),
+        body: JSON.stringify({ trigger, auxiliaryTriggers }),
       });
       publishControlState(payload.state);
       if (payload.lighting && payload.lighting.runtime) {
@@ -1174,6 +1317,28 @@
     dom.modeButtons.forEach((button) => {
       button.addEventListener("click", () => setOutputMode(button.dataset.lightingMode));
     });
+    [dom.oscTarget, dom.oscPort].forEach((input) => {
+      input.dataset.lightingConfigControl = "";
+      input.addEventListener("input", () => {
+        readStaticFields();
+        markDirty();
+      });
+    });
+    dom.engineButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!config || armed) {
+          return;
+        }
+        const nextEngine = normalizeLightingEngine(button.dataset.lightingEngine);
+        if (nextEngine === config.outputMode) {
+          return;
+        }
+        config.outputMode = nextEngine;
+        markDirty();
+        renderLightingEngine();
+        updateControlAvailability();
+      });
+    });
   }
 
   async function initialize(options = {}) {
@@ -1211,6 +1376,7 @@
 
   global.ProjectBluffLighting = {
     addFixtureToConfig,
+    buildStageTriggers,
     canApplySharedConfig,
     clearProgramState,
     clearProgramValue,
@@ -1220,6 +1386,7 @@
     hasProgrammedValue,
     initialize,
     nextFixturePatch,
+    normalizeLightingEngine,
     normalizeOutputMode,
     onSettingsOpened,
     outputTriggerForMode,

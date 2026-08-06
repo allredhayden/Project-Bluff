@@ -33,12 +33,21 @@ function blankConfig() {
     };
   });
   return {
-    version: 2,
+    version: 3,
+    outputMode: "artnet",
     artnet: {
       targetHost: "255.255.255.255",
       interfaceAddress: "",
       portAddressBase: 0,
       refreshHz: 30,
+    },
+    osc: {
+      targetHost: "127.0.0.1",
+      targetPort: 53000,
+      messages: {
+        setup: "", day: "", nominations: "", night: "", stopAll: "",
+        bells: "", maleScream: "", femaleScream: "",
+      },
     },
     fixtures: [],
     cues,
@@ -152,7 +161,9 @@ test("configuration comparison ignores object key order but detects cue edits", 
     cues: copied.cues,
     fixtures: copied.fixtures,
     artnet: copied.artnet,
-    version: 2,
+    osc: copied.osc,
+    outputMode: "artnet",
+    version: 3,
   };
   assert.equal(lighting.configsEqual(first, reordered), true);
   reordered.cues.night.fixtures["fixture-one"].values.blue = 255;
@@ -211,6 +222,18 @@ test("lighting editor output mode defaults to Live and Blind follows the game", 
   assert.equal(lighting.outputTriggerForMode("blind", "night", "day"), "day");
 });
 
+test("lighting engine defaults to Art-Net and DAY events preserve actual playback order", () => {
+  const lighting = loadLightingModule();
+  assert.equal(lighting.normalizeLightingEngine(undefined), "artnet");
+  assert.equal(lighting.normalizeLightingEngine("osc"), "osc");
+  assert.deepEqual(Array.from(lighting.buildStageTriggers("night")), ["night"]);
+  assert.deepEqual(Array.from(lighting.buildStageTriggers("day", {
+    bells: true,
+    maleScream: false,
+    femaleScream: true,
+  })), ["day", "bells", "femaleScream"]);
+});
+
 test("cue edits recall only the output-driving look for each mode", () => {
   const lighting = loadLightingModule();
   assert.equal(lighting.shouldRecallEditedTrigger("live", "night", "night", "day"), true);
@@ -247,16 +270,16 @@ test("service worker bypasses lighting API requests before any cache response", 
   assert.equal(responded, false);
 });
 
-test("service worker cache version and lighting asset match the application", () => {
+test("service worker cache version and dual lighting asset match the application", () => {
   const appSource = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
   const workerSource = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
-  assert.match(appSource, /AUDIO_CACHE_NAME = "botc-soundtrack-v17"/);
-  assert.match(workerSource, /CACHE_NAME = "botc-soundtrack-v17"/);
+  assert.match(appSource, /AUDIO_CACHE_NAME = "botc-soundtrack-v18"/);
+  assert.match(workerSource, /CACHE_NAME = "botc-soundtrack-v18"/);
   assert.match(workerSource, /"\.\/lighting-control\.js"/);
   assert.doesNotMatch(workerSource, /osc-control/);
 });
 
-test("service worker activation deletes old caches and preserves v17", async () => {
+test("service worker activation deletes old caches and preserves v18", async () => {
   const listeners = {};
   const deleted = [];
   const self = {
@@ -271,7 +294,7 @@ test("service worker activation deletes old caches and preserves v17", async () 
       deleted.push(name);
       return true;
     },
-    keys: async () => ["botc-soundtrack-v16", "botc-soundtrack-v17", "unrelated-old-cache"],
+    keys: async () => ["botc-soundtrack-v17", "botc-soundtrack-v18", "unrelated-old-cache"],
     open: async () => ({ addAll: async () => undefined }),
   };
   vm.runInNewContext(
@@ -281,25 +304,28 @@ test("service worker activation deletes old caches and preserves v17", async () 
   let activation = null;
   listeners.activate({ waitUntil(promise) { activation = promise; } });
   await activation;
-  assert.deepEqual(deleted.sort(), ["botc-soundtrack-v16", "unrelated-old-cache"]);
+  assert.deepEqual(deleted.sort(), ["botc-soundtrack-v17", "unrelated-old-cache"]);
 });
 
-test("primary stages and Stop All dispatch exactly one lighting trigger", () => {
+test("primary stages dispatch actual auxiliary sounds while Stop All remains singular", () => {
   const source = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
-  assert.match(source, /dispatchLightingTrigger\(stage\)/);
+  assert.match(source, /buildStageTriggers\(stage/);
+  assert.match(source, /dispatchLightingTrigger\(stage, lightingTriggers\.slice\(1\)\)/);
   assert.match(source, /dispatchLightingTrigger\("stopAll"\)/);
-  assert.doesNotMatch(source, /buildStageTriggers/);
   assert.doesNotMatch(source, /ProjectBluffOsc/);
 });
 
-test("operator UI and source no longer contain Grimoire or OSC controls", () => {
+test("operator UI offers mutually exclusive Art-Net and OSC controls", () => {
   const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
   const server = fs.readFileSync(path.join(projectRoot, "server.py"), "utf8");
   assert.match(html, /Lighting/);
   assert.match(html, /Add Fixture/);
   assert.match(html, /data-lighting-mode="live"/);
   assert.match(html, /data-lighting-mode="blind"/);
+  assert.match(html, /data-lighting-engine="artnet"/);
+  assert.match(html, /data-lighting-engine="osc"/);
+  assert.match(html, /data-lighting-osc-message-list/);
   assert.match(fs.readFileSync(path.join(projectRoot, "lighting-control.js"), "utf8"), /lighting-cue-profile-group/);
-  assert.doesNotMatch(html, /Grimoire|OSC/);
-  assert.doesNotMatch(server, /Grimoire|OSC/);
+  assert.doesNotMatch(html, /Grimoire/);
+  assert.match(server, /OSC/);
 });

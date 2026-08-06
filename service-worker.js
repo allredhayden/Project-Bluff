@@ -1,4 +1,4 @@
-const CACHE_NAME = "botc-soundtrack-v17";
+const CACHE_NAME = "botc-soundtrack-v18";
 const APP_SHELL = [
   "./",
   "./index.html",

@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v17";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v18";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
@@ -1450,11 +1450,11 @@ function runStageCue(stage, murderCue = null) {
   runNightCue();
 }
 
-function dispatchLightingTrigger(trigger) {
+function dispatchLightingTrigger(trigger, auxiliaryTriggers = []) {
   if (!window.ProjectBluffLighting) {
     return;
   }
-  window.ProjectBluffLighting.dispatchTrigger(trigger);
+  window.ProjectBluffLighting.dispatchTrigger(trigger, auxiliaryTriggers);
 }
 
 function applySharedControlState(state) {
@@ -1500,8 +1500,15 @@ async function handleStageTap(stage) {
 
   try {
     await ensureAudioReady();
+    const lightingTriggers = window.ProjectBluffLighting
+      ? window.ProjectBluffLighting.buildStageTriggers(stage, {
+        bells: stage === "day" && daySoundState.bells,
+        maleScream: Boolean(murderCue && murderCue.maleScream),
+        femaleScream: Boolean(murderCue && murderCue.femaleScream),
+      })
+      : [stage];
     runStageCue(stage, murderCue);
-    dispatchLightingTrigger(stage);
+    dispatchLightingTrigger(stage, lightingTriggers.slice(1));
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Audio could not be started.");

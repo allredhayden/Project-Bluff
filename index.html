@@ -193,90 +193,136 @@
             Checking for the local Bluff server...
           </p>
           <fieldset class="lighting-fieldset" data-lighting-fieldset disabled>
+            <div class="lighting-engine-toggle" role="group" aria-label="Lighting output engine">
+              <button
+                class="lighting-engine-button"
+                type="button"
+                data-lighting-engine="artnet"
+                aria-pressed="true"
+              >ART-NET</button>
+              <button
+                class="lighting-engine-button"
+                type="button"
+                data-lighting-engine="osc"
+                aria-pressed="false"
+              >OSC</button>
+            </div>
             <div class="lighting-arm-actions" role="group" aria-label="Lighting output controls">
               <button class="lighting-arm-button" type="button" data-lighting-arm>Arm Lighting</button>
               <button class="lighting-disarm-button" type="button" data-lighting-disarm disabled>Disarm + Blackout</button>
             </div>
 
-            <details class="lighting-network-panel">
-              <summary>Art-Net Output</summary>
-              <div class="lighting-network-grid">
-                <label class="lighting-field lighting-target-field">
-                  <span class="lighting-field-label">Target</span>
-                  <input
-                    class="lighting-input"
-                    type="text"
-                    value="255.255.255.255"
-                    autocapitalize="none"
-                    autocomplete="off"
-                    spellcheck="false"
-                    data-lighting-target
-                  >
-                </label>
-                <label class="lighting-field">
-                  <span class="lighting-field-label">Interface <span class="lighting-optional">Optional</span></span>
-                  <input
-                    class="lighting-input"
-                    type="text"
-                    placeholder="192.168.1.155"
-                    autocapitalize="none"
-                    autocomplete="off"
-                    spellcheck="false"
-                    data-lighting-interface
-                  >
-                </label>
-                <label class="lighting-field lighting-small-field">
-                  <span class="lighting-field-label">Universe Base</span>
-                  <input class="lighting-input" type="number" min="0" max="32767" inputmode="numeric" value="0" data-lighting-base>
-                </label>
-                <label class="lighting-field lighting-small-field">
-                  <span class="lighting-field-label">Refresh Hz</span>
-                  <input class="lighting-input" type="number" min="1" max="60" step="1" inputmode="decimal" value="30" data-lighting-refresh>
-                </label>
-              </div>
-              <p class="lighting-helper">Show Universe 1 maps to Art-Net port address 0 with the default base.</p>
-            </details>
+            <div data-lighting-artnet-panel>
+              <details class="lighting-network-panel">
+                <summary>Art-Net Output</summary>
+                <div class="lighting-network-grid">
+                  <label class="lighting-field lighting-target-field">
+                    <span class="lighting-field-label">Target</span>
+                    <input
+                      class="lighting-input"
+                      type="text"
+                      value="255.255.255.255"
+                      autocapitalize="none"
+                      autocomplete="off"
+                      spellcheck="false"
+                      data-lighting-target
+                    >
+                  </label>
+                  <label class="lighting-field">
+                    <span class="lighting-field-label">Interface <span class="lighting-optional">Optional</span></span>
+                    <input
+                      class="lighting-input"
+                      type="text"
+                      placeholder="192.168.1.155"
+                      autocapitalize="none"
+                      autocomplete="off"
+                      spellcheck="false"
+                      data-lighting-interface
+                    >
+                  </label>
+                  <label class="lighting-field lighting-small-field">
+                    <span class="lighting-field-label">Universe Base</span>
+                    <input class="lighting-input" type="number" min="0" max="32767" inputmode="numeric" value="0" data-lighting-base>
+                  </label>
+                  <label class="lighting-field lighting-small-field">
+                    <span class="lighting-field-label">Refresh Hz</span>
+                    <input class="lighting-input" type="number" min="1" max="60" step="1" inputmode="decimal" value="30" data-lighting-refresh>
+                  </label>
+                </div>
+                <p class="lighting-helper">Show Universe 1 maps to Art-Net port address 0 with the default base.</p>
+              </details>
 
-            <div class="lighting-editor-section">
-              <div class="lighting-section-header">
-                <h4 class="settings-subsection-title">Fixtures</h4>
-                <button class="lighting-add-button" type="button" data-lighting-add-fixture>Add Fixture</button>
+              <div class="lighting-editor-section">
+                <div class="lighting-section-header">
+                  <h4 class="settings-subsection-title">Fixtures</h4>
+                  <button class="lighting-add-button" type="button" data-lighting-add-fixture>Add Fixture</button>
+                </div>
+                <p class="lighting-empty" data-lighting-empty>No fixtures configured.</p>
+                <div class="lighting-fixture-list" data-lighting-fixture-list></div>
               </div>
-              <p class="lighting-empty" data-lighting-empty>No fixtures configured.</p>
-              <div class="lighting-fixture-list" data-lighting-fixture-list></div>
+
+              <div class="lighting-editor-section" data-lighting-cue-section hidden>
+                <div class="lighting-section-header lighting-cue-header">
+                  <h4 class="settings-subsection-title">Trigger Look</h4>
+                  <div class="lighting-mode-toggle" role="group" aria-label="Lighting editor output mode">
+                    <button
+                      class="lighting-mode-button is-live"
+                      type="button"
+                      data-lighting-mode="live"
+                      aria-pressed="true"
+                    >LIVE</button>
+                    <button
+                      class="lighting-mode-button is-blind"
+                      type="button"
+                      data-lighting-mode="blind"
+                      aria-pressed="false"
+                    >BLIND</button>
+                  </div>
+                </div>
+                <p class="lighting-mode-status" data-lighting-mode-status data-mode="live">
+                  LIVE EDITOR: SETUP - ARM TO OUTPUT
+                </p>
+                <div class="lighting-trigger-tabs" data-lighting-trigger-tabs role="tablist" aria-label="Lighting trigger looks"></div>
+                <label class="lighting-field lighting-fade-field">
+                  <span class="lighting-field-label">Fade Time</span>
+                  <span class="lighting-fade-input-wrap">
+                    <input class="lighting-input" type="number" min="0" max="600" step="0.1" inputmode="decimal" value="3" data-lighting-fade-time>
+                    <span>seconds</span>
+                  </span>
+                </label>
+                <p class="lighting-helper">Every trigger is a complete look. LIVE recalls and updates the editor look. BLIND follows the active game look.</p>
+                <div class="lighting-cue-fixtures" data-lighting-cue-fixtures></div>
+              </div>
             </div>
 
-            <div class="lighting-editor-section" data-lighting-cue-section hidden>
-              <div class="lighting-section-header lighting-cue-header">
-                <h4 class="settings-subsection-title">Trigger Look</h4>
-                <div class="lighting-mode-toggle" role="group" aria-label="Lighting editor output mode">
-                  <button
-                    class="lighting-mode-button is-live"
-                    type="button"
-                    data-lighting-mode="live"
-                    aria-pressed="true"
-                  >LIVE</button>
-                  <button
-                    class="lighting-mode-button is-blind"
-                    type="button"
-                    data-lighting-mode="blind"
-                    aria-pressed="false"
-                  >BLIND</button>
+            <div class="lighting-osc-panel" data-lighting-osc-panel hidden>
+              <div class="lighting-editor-section">
+                <h4 class="settings-subsection-title">OSC Destination</h4>
+                <div class="lighting-network-grid">
+                  <label class="lighting-field lighting-target-field">
+                    <span class="lighting-field-label">Target</span>
+                    <input
+                      class="lighting-input"
+                      type="text"
+                      value="127.0.0.1"
+                      autocapitalize="none"
+                      autocomplete="off"
+                      spellcheck="false"
+                      data-lighting-osc-target
+                    >
+                  </label>
+                  <label class="lighting-field lighting-small-field">
+                    <span class="lighting-field-label">Port</span>
+                    <input class="lighting-input" type="number" min="1" max="65535" inputmode="numeric" value="53000" data-lighting-osc-port>
+                  </label>
                 </div>
+                <p class="lighting-helper">QLab defaults to 127.0.0.1:53000 when it runs on this Mac.</p>
               </div>
-              <p class="lighting-mode-status" data-lighting-mode-status data-mode="live">
-                LIVE EDITOR: SETUP - ARM TO OUTPUT
-              </p>
-              <div class="lighting-trigger-tabs" data-lighting-trigger-tabs role="tablist" aria-label="Lighting trigger looks"></div>
-              <label class="lighting-field lighting-fade-field">
-                <span class="lighting-field-label">Fade Time</span>
-                <span class="lighting-fade-input-wrap">
-                  <input class="lighting-input" type="number" min="0" max="600" step="0.1" inputmode="decimal" value="3" data-lighting-fade-time>
-                  <span>seconds</span>
-                </span>
-              </label>
-              <p class="lighting-helper">Every trigger is a complete look. LIVE recalls and updates the editor look. BLIND follows the active game look.</p>
-              <div class="lighting-cue-fixtures" data-lighting-cue-fixtures></div>
+              <div class="lighting-editor-section">
+                <h4 class="settings-subsection-title">Event Messages</h4>
+                <p class="lighting-helper">Enter a complete OSC address and optional quoted string arguments. A blank event is skipped.</p>
+                <div class="lighting-osc-message-list" data-lighting-osc-message-list></div>
+              </div>
             </div>
 
             <p class="lighting-error-summary" data-lighting-error-summary aria-live="polite"></p>

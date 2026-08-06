@@ -4,6 +4,7 @@ import pytest
 
 from fixture_definitions import DEFAULT_FADE_PARAMETERS, FIXTURE_DEFINITIONS, PARAMETER_KEYS
 from lighting_config import (
+    OSC_TRIGGER_KEYS,
     TRIGGER_KEYS,
     LightingConfigStore,
     LightingConfigValidationError,
@@ -29,13 +30,19 @@ def config_with_fixture(*, fixture_id="light-1", fixture_type="shehds-par-7x18-r
 
 def test_default_is_safe_and_contains_no_fixtures():
     config = default_config()
-    assert config["version"] == 2
+    assert config["version"] == 3
+    assert config["outputMode"] == "artnet"
     assert config["fixtures"] == []
     assert config["artnet"] == {
         "targetHost": "255.255.255.255",
         "interfaceAddress": "",
         "portAddressBase": 0,
         "refreshHz": 30.0,
+    }
+    assert config["osc"] == {
+        "targetHost": "127.0.0.1",
+        "targetPort": 53000,
+        "messages": {trigger: "" for trigger in OSC_TRIGGER_KEYS},
     }
     assert tuple(config["cues"]) == TRIGGER_KEYS
     assert all(cue["fixtures"] == {} for cue in config["cues"].values())
@@ -134,12 +141,52 @@ def test_version_one_complete_fixture_cues_upgrade_without_changing_their_look()
 
     upgraded = normalize_config(legacy)
 
-    assert upgraded["version"] == 2
+    assert upgraded["version"] == 3
+    assert upgraded["outputMode"] == "artnet"
     assert upgraded["cues"]["night"]["fixtures"]["light-1"]["values"]["blue"] == 211
     assert all(
         state == {"values": {}, "fade": []}
         for state in upgraded["cues"]["night"]["profiles"].values()
     )
+
+
+def test_version_two_artnet_config_upgrades_losslessly():
+    legacy = config_with_fixture(fixture_type="shehds-par-18x18-rgbwauv-10ch", address=11)
+    legacy["cues"]["day"]["fadeMs"] = 7123
+    legacy["cues"]["day"]["fixtures"]["light-1"] = {
+        "values": {"dimmer": 255, "red": 91, "white": 17},
+        "fade": ["dimmer", "red", "white"],
+    }
+    legacy["artnet"]["targetHost"] = "192.168.1.255"
+    legacy["version"] = 2
+    legacy.pop("outputMode")
+    legacy.pop("osc")
+    original_artnet = json.loads(json.dumps(legacy["artnet"]))
+    original_fixtures = json.loads(json.dumps(legacy["fixtures"]))
+    original_cues = json.loads(json.dumps(legacy["cues"]))
+
+    upgraded = normalize_config(legacy)
+
+    assert upgraded["version"] == 3
+    assert upgraded["outputMode"] == "artnet"
+    assert upgraded["artnet"] == original_artnet
+    assert upgraded["fixtures"] == original_fixtures
+    assert upgraded["cues"] == original_cues
+
+
+def test_osc_destination_and_all_eight_messages_are_validated():
+    config = default_config()
+    config["outputMode"] = "osc"
+    config["osc"]["messages"]["day"] = '/cue/DAY/start "look one"'
+    normalized = normalize_config(config)
+    assert normalized["osc"]["messages"]["day"] == '/cue/DAY/start "look one"'
+
+    config["osc"]["targetPort"] = True
+    config["osc"]["messages"]["night"] = 'not-an-address "broken'
+    with pytest.raises(LightingConfigValidationError) as captured:
+        normalize_config(config)
+    assert "osc.targetPort" in captured.value.field_errors
+    assert "osc.messages.night" in captured.value.field_errors
 
 
 def test_patch_overlap_and_footprint_bounds_are_rejected():

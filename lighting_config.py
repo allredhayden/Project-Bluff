@@ -20,14 +20,19 @@ from fixture_definitions import (
 )
 
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 TRIGGER_KEYS = ("setup", "day", "nominations", "night", "stopAll")
+OSC_AUXILIARY_TRIGGER_KEYS = ("bells", "maleScream", "femaleScream")
+OSC_TRIGGER_KEYS = (*TRIGGER_KEYS, *OSC_AUXILIARY_TRIGGER_KEYS)
 TRIGGER_LABELS = {
     "setup": "SETUP",
     "day": "DAY",
     "nominations": "NOMINATIONS",
     "night": "NIGHT",
     "stopAll": "STOP ALL",
+    "bells": "BELLS",
+    "maleScream": "MALE SCREAM",
+    "femaleScream": "FEMALE SCREAM",
 }
 MAX_FIXTURES = 64
 MAX_FIXTURE_NAME_LENGTH = 64
@@ -35,6 +40,7 @@ MAX_FIXTURE_ID_LENGTH = 64
 MAX_FADE_MS = 600_000
 MAX_ARTNET_PORT_ADDRESS = 0x7FFF
 DEFAULT_FADE_MS = 3_000
+MAX_OSC_MESSAGE_LENGTH = 512
 
 _FIXTURE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _HOST_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -59,33 +65,47 @@ def default_fixture_cue_state() -> dict[str, Any]:
     }
 
 
-def _upgrade_legacy_config(payload: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade the complete-fixture version 1 cue model to sparse overrides."""
+def default_osc_config() -> dict[str, Any]:
+    return {
+        "targetHost": "127.0.0.1",
+        "targetPort": 53000,
+        "messages": {trigger: "" for trigger in OSC_TRIGGER_KEYS},
+    }
 
-    if payload.get("version") != 1 or isinstance(payload.get("version"), bool):
+
+def _upgrade_legacy_config(payload: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade version 1/2 Art-Net configurations without changing show data."""
+
+    version = payload.get("version")
+    if isinstance(version, bool) or version not in {1, 2}:
         return payload
     upgraded = copy.deepcopy(payload)
+    if version == 1:
+        cues = upgraded.get("cues")
+        if isinstance(cues, dict):
+            for cue in cues.values():
+                if isinstance(cue, dict) and "profiles" not in cue:
+                    cue["profiles"] = {
+                        profile_type: default_fixture_cue_state()
+                        for profile_type in FIXTURE_DEFINITIONS
+                    }
     upgraded["version"] = CONFIG_VERSION
-    cues = upgraded.get("cues")
-    if isinstance(cues, dict):
-        for cue in cues.values():
-            if isinstance(cue, dict) and "profiles" not in cue:
-                cue["profiles"] = {
-                    profile_type: default_fixture_cue_state()
-                    for profile_type in FIXTURE_DEFINITIONS
-                }
+    upgraded["outputMode"] = "artnet"
+    upgraded["osc"] = default_osc_config()
     return upgraded
 
 
 def default_config() -> dict[str, Any]:
     return {
         "version": CONFIG_VERSION,
+        "outputMode": "artnet",
         "artnet": {
             "targetHost": "255.255.255.255",
             "interfaceAddress": "",
             "portAddressBase": 0,
             "refreshHz": 30.0,
         },
+        "osc": default_osc_config(),
         "fixtures": [],
         "cues": {
             trigger: {
@@ -168,6 +188,88 @@ def _validate_artnet(payload: Any, errors: dict[str, str]) -> dict[str, Any]:
         "interfaceAddress": interface_address,
         "portAddressBase": port_address_base,
         "refreshHz": float(refresh_hz),
+    }
+
+
+def _validate_osc(payload: Any, errors: dict[str, str]) -> dict[str, Any]:
+    from osc_sender import MessageValidationError, parse_osc_message
+
+    if not isinstance(payload, dict):
+        errors["osc"] = "OSC settings must be an object."
+        payload = {}
+    if set(payload) != {"targetHost", "targetPort", "messages"}:
+        errors["osc"] = "OSC settings must contain only targetHost, targetPort, and messages."
+
+    raw_host = payload.get("targetHost")
+    try:
+        if not isinstance(raw_host, str):
+            raise ValueError("Enter a host name or IP address.")
+        target_host = raw_host.strip()
+        if not target_host or target_host != raw_host or len(target_host) > 253:
+            raise ValueError("Enter a host name or IP address.")
+        if any(ord(character) < 32 or ord(character) == 127 for character in target_host):
+            raise ValueError("Host cannot contain control characters.")
+        if any(character.isspace() for character in target_host):
+            raise ValueError("Host cannot contain whitespace.")
+        if "://" in target_host or any(character in target_host for character in "/?#@"):
+            raise ValueError("Enter only a host name or IP address, without a scheme or path.")
+        candidate = (
+            target_host[1:-1]
+            if target_host.startswith("[") and target_host.endswith("]")
+            else target_host
+        )
+        try:
+            ipaddress.ip_address(candidate)
+            target_host = candidate
+        except ValueError:
+            hostname = target_host[:-1] if target_host.endswith(".") else target_host
+            if not hostname or any(not _HOST_LABEL.fullmatch(label) for label in hostname.split(".")):
+                raise ValueError("Enter a valid host name or IP address.") from None
+    except ValueError as error:
+        target_host = "127.0.0.1"
+        errors["osc.targetHost"] = str(error)
+
+    target_port = payload.get("targetPort")
+    if (
+        isinstance(target_port, bool)
+        or not isinstance(target_port, int)
+        or not 1 <= target_port <= 65535
+    ):
+        errors["osc.targetPort"] = "Port must be an integer from 1 through 65535."
+        target_port = 53000
+
+    raw_messages = payload.get("messages")
+    if not isinstance(raw_messages, dict):
+        errors["osc.messages"] = "OSC messages must be an object."
+        raw_messages = {}
+    if set(raw_messages) != set(OSC_TRIGGER_KEYS):
+        errors["osc.messages"] = "OSC messages must contain every supported event exactly once."
+    messages = {}
+    for trigger in OSC_TRIGGER_KEYS:
+        raw_message = raw_messages.get(trigger)
+        field = f"osc.messages.{trigger}"
+        if not isinstance(raw_message, str):
+            errors[field] = "OSC message must be text."
+            messages[trigger] = ""
+            continue
+        message = raw_message.strip()
+        if len(message) > MAX_OSC_MESSAGE_LENGTH:
+            errors[field] = f"OSC message cannot exceed {MAX_OSC_MESSAGE_LENGTH} characters."
+            messages[trigger] = ""
+            continue
+        if message:
+            try:
+                parse_osc_message(message)
+            except MessageValidationError as error:
+                errors[field] = str(error)
+                messages[trigger] = ""
+                continue
+        messages[trigger] = message
+
+    return {
+        "targetHost": target_host,
+        "targetPort": target_port,
+        "messages": messages,
     }
 
 
@@ -403,19 +505,27 @@ def normalize_config(payload: Any) -> dict[str, Any]:
 
     payload = _upgrade_legacy_config(payload)
     errors: dict[str, str] = {}
-    if set(payload) != {"version", "artnet", "fixtures", "cues"}:
+    if set(payload) != {"version", "outputMode", "artnet", "osc", "fixtures", "cues"}:
         errors["config"] = "Configuration contains unsupported or missing fields."
     if payload.get("version") != CONFIG_VERSION or isinstance(payload.get("version"), bool):
         errors["version"] = f"Configuration version must be {CONFIG_VERSION}."
 
+    output_mode = payload.get("outputMode")
+    if output_mode not in {"artnet", "osc"}:
+        errors["outputMode"] = "Choose Art-Net or OSC output."
+        output_mode = "artnet"
+
     artnet = _validate_artnet(payload.get("artnet"), errors)
+    osc = _validate_osc(payload.get("osc"), errors)
     fixtures = _validate_fixtures(payload.get("fixtures"), artnet, errors)
     cues = _validate_cues(payload.get("cues"), fixtures, errors)
     if errors:
         raise LightingConfigValidationError(errors)
     return {
         "version": CONFIG_VERSION,
+        "outputMode": output_mode,
         "artnet": artnet,
+        "osc": osc,
         "fixtures": fixtures,
         "cues": cues,
     }

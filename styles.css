@@ -682,6 +682,7 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
 
 .lighting-arm-button,
 .lighting-disarm-button,
+.lighting-engine-button,
 .lighting-add-button,
 .lighting-remove-button,
 .lighting-clear-button,
@@ -699,6 +700,26 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
   font-weight: 700;
   line-height: 1;
   text-transform: uppercase;
+}
+
+.lighting-engine-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  border: 1px solid var(--pg-border);
+  background: var(--pg-surface-inset);
+  padding: 3px;
+}
+
+.lighting-engine-button {
+  min-height: 40px;
+}
+
+.lighting-engine-button[aria-pressed="true"] {
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+  box-shadow: inset 0 -3px 0 var(--pg-orange);
 }
 
 .lighting-arm-button {
@@ -722,6 +743,8 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
 .lighting-clear-button:disabled,
 .lighting-trigger-tab:disabled,
 .lighting-mode-button:disabled,
+.lighting-engine-button:disabled,
+.lighting-preview-button:disabled,
 .lighting-save-button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
@@ -836,6 +859,41 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
 
 .lighting-editor-section[hidden] {
   display: none;
+}
+
+[data-lighting-artnet-panel][hidden],
+.lighting-osc-panel[hidden] {
+  display: none;
+}
+
+.lighting-osc-panel,
+.lighting-osc-message-list {
+  display: grid;
+  gap: 6px;
+}
+
+.lighting-osc-message-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px;
+  align-items: end;
+  gap: 6px;
+}
+
+.lighting-osc-message-field {
+  padding: 6px;
+}
+
+.lighting-osc-message-input {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 16px;
+}
+
+.lighting-osc-test-button {
+  min-height: 42px;
+  border-color: var(--pg-orange-border);
+  background: var(--pg-orange-soft);
+  color: var(--pg-orange-strong);
+  padding: 0 6px;
 }
 
 .lighting-section-header {
@@ -1103,6 +1161,10 @@ body:not(.loop-progress-enabled) .stage-loop-meter {
 
   .lighting-trigger-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lighting-osc-message-row {
+    grid-template-columns: minmax(0, 1fr) 82px;
   }
 }
 

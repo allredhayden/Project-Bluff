@@ -1,10 +1,25 @@
 {
-  "version": 2,
+  "version": 3,
+  "outputMode": "artnet",
   "artnet": {
     "targetHost": "255.255.255.255",
     "interfaceAddress": "",
     "portAddressBase": 0,
     "refreshHz": 30.0
+  },
+  "osc": {
+    "targetHost": "127.0.0.1",
+    "targetPort": 53000,
+    "messages": {
+      "setup": "",
+      "day": "",
+      "nominations": "",
+      "night": "",
+      "stopAll": "",
+      "bells": "",
+      "maleScream": "",
+      "femaleScream": ""
+    }
   },
   "fixtures": [],
   "cues": {
