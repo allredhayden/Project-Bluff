@@ -6,6 +6,7 @@
   const MIN_SIZE = 16;
   const MAX_SIZE = 72;
   const SIZE_STEP = 4;
+  const KEYBOARD_HEIGHT_THRESHOLD = 100;
   const modal = document.querySelector("[data-text-modal]");
   const openButton = document.querySelector("[data-text-open]");
   const closeButton = document.querySelector("[data-text-close]");
@@ -26,6 +27,8 @@
   const clearButtons = Array.from(document.querySelectorAll("[data-text-clear]"));
   const state = { mode: "billboard", billboard: "", conversation: "", size: 36 };
   let editingBillboard = false;
+  let billboardViewportHeight = 0;
+  let billboardKeyboardVisible = false;
   let fitFrame = 0;
   let conversationSelection = null;
 
@@ -90,6 +93,15 @@
     modal.style.height = `${height}px`;
     modal.style.top = `${viewport ? viewport.offsetTop : 0}px`;
     modal.classList.toggle("text-compact", height < 300);
+    if (editingBillboard && (!viewport || viewport.scale === 1)) {
+      // Native keyboard dismissal can restore the viewport without blurring the editor.
+      // Ignore small changes from browser toolbars and wait for a keyboard-sized shrink.
+      if (billboardViewportHeight - height > KEYBOARD_HEIGHT_THRESHOLD) {
+        billboardKeyboardVisible = true;
+      } else if (billboardKeyboardVisible) {
+        showBillboard();
+      }
+    }
     scheduleFit();
   }
 
@@ -102,6 +114,7 @@
 
   function showBillboard() {
     editingBillboard = false;
+    billboardKeyboardVisible = false;
     billboardEditor.blur();
     billboardEditor.hidden = true;
     billboardStage.hidden = false;
@@ -114,6 +127,8 @@
 
   function editBillboard() {
     editingBillboard = true;
+    billboardViewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    billboardKeyboardVisible = false;
     billboardStage.hidden = true;
     billboardEditor.hidden = false;
     billboardEditor.value = state.billboard;
@@ -228,6 +243,12 @@
       modeButtons[next].focus();
     });
   });
+  billboardEdit.addEventListener("pointerdown", (event) => {
+    // Keep Done active until click; an earlier blur would turn it back into Edit.
+    if (document.activeElement === billboardEditor) {
+      event.preventDefault();
+    }
+  });
   billboardEdit.addEventListener("click", () => {
     if (editingBillboard) {
       showBillboard();
@@ -239,6 +260,11 @@
   billboardEditor.addEventListener("input", () => {
     state.billboard = billboardEditor.value;
     save();
+  });
+  billboardEditor.addEventListener("blur", () => {
+    if (editingBillboard) {
+      showBillboard();
+    }
   });
   conversationEditor.addEventListener("input", () => {
     state.conversation = conversationEditor.value;

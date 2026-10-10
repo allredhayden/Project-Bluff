@@ -315,14 +315,14 @@ test("service worker bypasses lighting API requests before any cache response", 
 test("service worker cache version and lighting/message assets match the application", () => {
   const appSource = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
   const workerSource = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
-  assert.match(appSource, /AUDIO_CACHE_NAME = "botc-soundtrack-v24"/);
-  assert.match(workerSource, /CACHE_NAME = "botc-soundtrack-v24"/);
+  assert.match(appSource, /AUDIO_CACHE_NAME = "botc-soundtrack-v25"/);
+  assert.match(workerSource, /CACHE_NAME = "botc-soundtrack-v25"/);
   assert.match(workerSource, /"\.\/lighting-control\.js"/);
   assert.match(workerSource, /"\.\/text-messages\.js"/);
   assert.doesNotMatch(workerSource, /osc-control/);
 });
 
-test("service worker activation deletes old caches and preserves v24", async () => {
+test("service worker activation deletes old caches and preserves v25", async () => {
   const listeners = {};
   const deleted = [];
   const self = {
@@ -337,7 +337,7 @@ test("service worker activation deletes old caches and preserves v24", async () 
       deleted.push(name);
       return true;
     },
-    keys: async () => ["botc-soundtrack-v23", "botc-soundtrack-v24", "unrelated-old-cache"],
+    keys: async () => ["botc-soundtrack-v24", "botc-soundtrack-v25", "unrelated-old-cache"],
     open: async () => ({ addAll: async () => undefined }),
   };
   vm.runInNewContext(
@@ -347,7 +347,7 @@ test("service worker activation deletes old caches and preserves v24", async () 
   let activation = null;
   listeners.activate({ waitUntil(promise) { activation = promise; } });
   await activation;
-  assert.deepEqual(deleted.sort(), ["botc-soundtrack-v23", "unrelated-old-cache"]);
+  assert.deepEqual(deleted.sort(), ["botc-soundtrack-v24", "unrelated-old-cache"]);
 });
 
 test("primary stages dispatch actual auxiliary sounds while Stop All remains singular", () => {

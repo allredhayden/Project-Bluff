@@ -6,7 +6,7 @@ Project Bluff is a mobile-first Blood on the Clocktower soundtrack and lighting 
 
 ### Silent messages on the Storyteller's phone
 
-Tap **TEXT** in the top header to talk silently to a player during the night. **Billboard** displays one message at the largest size that fits the screen; tap **Edit**, write the message, then **Done** to show it. **Conversation** is one shared editable text area on the same phone. Use Enter for line breaks and the **− / +** controls at the top to change its size. Tap **Done** below the conversation to dismiss the keyboard.
+Tap **TEXT** in the top header to talk silently to a player during the night. **Billboard** displays one message at the largest size that fits the screen; tap **Edit**, write the message, then **Done** or dismiss the keyboard to show it. The text fits again as the keyboard closes. **Conversation** is one shared editable text area on the same phone. Use Enter for line breaks and the **− / +** controls at the top to change its size. Tap **Done** below the conversation to dismiss the keyboard.
 
 Each mode has a **Clear** button at the top that erases only that mode's draft. While the text screen is open, the soundtrack controller is hidden and cannot be clicked, including when the keyboard reduces the visible screen area.
 
