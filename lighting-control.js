@@ -1366,6 +1366,19 @@
     }
   }
 
+  async function updateSettings(changes, options = {}) {
+    if (!available) {
+      throw new ApiError("The local Bluff server is unavailable.");
+    }
+    const payload = await requestJson("api/control/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ changes, initializeOnly: options.initializeOnly === true }),
+    });
+    publishControlState(payload.state);
+    return payload;
+  }
+
   function bindStaticFields() {
     [dom.target, dom.interfaceAddress, dom.portAddressBase, dom.refreshHz].forEach((input) => {
       input.dataset.lightingConfigControl = "";
@@ -1479,5 +1492,6 @@
     setProgramFade,
     setProgramValue,
     shouldRecallEditedTrigger,
+    updateSettings,
   };
 }(window));

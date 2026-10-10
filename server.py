@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -30,6 +31,12 @@ from lighting_config import (
 )
 from lighting_output import LightingOutputController
 from osc_sender import OscSender
+from playback_settings import (
+    PlaybackSettingsError,
+    PlaybackSettingsStore,
+    default_playback_settings,
+    patch_playback_settings,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -43,7 +50,7 @@ def _utc_now() -> str:
 
 
 class ControlState:
-    """Process-local shared stage state for simultaneous phone and desktop clients."""
+    """Shared stage state and saved settings for phone and desktop clients."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -63,6 +70,33 @@ class ControlState:
         self._nomination_mix_revision = 0
         self._nomination_mix_started_monotonic: float | None = None
         self._updated_at = _utc_now()
+        self._settings = default_playback_settings()
+        self._settings_initialized = False
+        self._settings_store: PlaybackSettingsStore | None = None
+
+    def attach_settings_store(self, store: PlaybackSettingsStore) -> None:
+        with self._lock:
+            self._settings, self._settings_initialized = store.load()
+            self._settings_store = store
+
+    def update_settings(self, changes: Any, *, initialize_only: bool = False) -> dict[str, Any]:
+        with self._lock:
+            settings = patch_playback_settings(self._settings, changes)
+            if initialize_only and self._settings_initialized:
+                return self._snapshot_locked()
+            if settings == self._settings and self._settings_initialized:
+                return self._snapshot_locked()
+            self._save_settings_locked(settings)
+            self._revision += 1
+            self._updated_at = _utc_now()
+            self._condition.notify_all()
+            return self._snapshot_locked()
+
+    def _save_settings_locked(self, settings: dict[str, Any]) -> None:
+        if self._settings_store is not None:
+            self._settings_store.save(settings)
+        self._settings = settings
+        self._settings_initialized = True
 
     def apply(
         self,
@@ -83,6 +117,14 @@ class ControlState:
                     self._phase_audio_event = None
                     self._phase_audio_started_monotonic = None
             elif trigger in STAGE_TRIGGERS or trigger == "stopAll":
+                if (
+                    trigger == "day"
+                    and any(item in auxiliary_triggers for item in ("maleScream", "femaleScream"))
+                    and any(self._settings["daySounds"][item] for item in ("maleScream", "femaleScream"))
+                ):
+                    self._save_settings_locked(patch_playback_settings(
+                        self._settings, {"daySounds": {"maleScream": False, "femaleScream": False}}
+                    ))
                 self._current_stage = trigger if trigger in STAGE_TRIGGERS else None
                 self._nomination_phase = "ready" if trigger == "nominations" else None
                 self._started_at = _utc_now() if self._current_stage else None
@@ -167,6 +209,8 @@ class ControlState:
             "nominationMixActive": self._nomination_mix_started_monotonic is not None,
             "nominationMixElapsedMs": nomination_mix_elapsed_ms,
             "updatedAt": self._updated_at,
+            "settings": copy.deepcopy(self._settings),
+            "settingsInitialized": self._settings_initialized,
         }
 
 
@@ -261,6 +305,7 @@ def create_app(
     lighting_runtime: LightingRuntime | None = None,
     control_state: ControlState | None = None,
     osc_sender: OscSender | None = None,
+    settings_path: str | os.PathLike[str] | None = None,
 ) -> Flask:
     app = Flask(__name__, static_folder=None, instance_relative_config=True)
     app.config.update(JSON_SORT_KEYS=False)
@@ -278,6 +323,12 @@ def create_app(
         osc_sender=osc_sender,
     )
     shared_state = control_state or ControlState()
+    resolved_settings_path = Path(
+        settings_path
+        or os.environ.get("BLUFF_PLAYBACK_SETTINGS_PATH")
+        or resolved_config_path.with_name("playback-settings.json")
+    )
+    shared_state.attach_settings_store(PlaybackSettingsStore(resolved_settings_path))
     app.extensions["project_bluff_control_state"] = shared_state
     control_dispatch_lock = threading.RLock()
     app.extensions["bluff_lighting_store"] = store
@@ -392,6 +443,23 @@ def create_app(
     def get_control_state():
         return jsonify(shared_state.snapshot())
 
+    @app.patch("/api/control/settings")
+    def update_control_settings():
+        payload = _json_body()
+        if set(payload) not in ({"changes"}, {"changes", "initializeOnly"}):
+            return _error_response("Provide changes and optional initializeOnly only.", 400)
+        if not isinstance(payload.get("initializeOnly", False), bool):
+            return _error_response("initializeOnly must be true or false.", 400)
+        try:
+            state = shared_state.update_settings(
+                payload["changes"], initialize_only=payload.get("initializeOnly", False)
+            )
+        except PlaybackSettingsError as error:
+            return _error_response(str(error), 400)
+        except OSError:
+            return _error_response("Playback settings could not be saved on the server.", 500)
+        return jsonify({"state": state})
+
     @app.get("/api/control/events")
     def stream_control_events():
         last_event_id = request.headers.get("Last-Event-ID")
@@ -437,6 +505,8 @@ def create_app(
                 shared_state.apply(trigger, auxiliary_triggers, loop_offset)
             except ControlTransitionError as error:
                 return _error_response(str(error), 409)
+            except OSError:
+                return _error_response("DAY sound arming could not be saved on the server.", 500)
             try:
                 lighting = runtime.trigger(trigger, auxiliary_triggers)
             except LightingRuntimeError as error:

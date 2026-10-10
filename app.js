@@ -66,6 +66,7 @@ const VOLUME_STORAGE_KEY = "project-bluff-volume-settings-v1";
 const LOCAL_MUTE_STORAGE_KEY = "project-bluff-local-muted-v1";
 const CUE_TIMER_UPDATE_MS = 250;
 const VOLUME_DEFAULTS_VERSION = 2;
+const SETTINGS_SYNC_DELAY_MS = 100;
 
 const STAGES = {
   setup: "SETUP",
@@ -199,6 +200,16 @@ let phaseAudioPendingUnlock = false;
 let latestSharedNominationMixState = null;
 let nominationMixPendingUnlock = false;
 let activeNominationMix = null;
+let hasSavedVolumeSettings = false;
+let pendingSettingsChanges = {};
+let inFlightSettingsChanges = {};
+let settingsSyncTimerId = null;
+let settingsSavePromise = null;
+let latestSharedSettings = null;
+let settingsMigrationAttempted = false;
+let settingsMigrationFailed = false;
+let sharedSettingsInitialized = false;
+let settingsSyncFailed = false;
 
 const activeLoops = new Map();
 const activeOneShots = new Set();
@@ -224,11 +235,13 @@ let focusedBeforeMurderConfirmation = null;
 let loopProgressFrameId = null;
 let pendingMurderConfirmation = null;
 
-const daySoundState = {
-  bells: true,
-  maleScream: false,
-  femaleScream: false,
-};
+const daySoundState = volumeSettings.daySounds;
+const initialSavedSettings = JSON.parse(JSON.stringify({
+  master: volumeSettings.master,
+  tracks: volumeSettings.tracks,
+  showLoopProgress: volumeSettings.showLoopProgress,
+  daySounds: volumeSettings.daySounds,
+}));
 
 function getDefaultTrackVolume(fileKey) {
   return DEFAULT_TRACK_VOLUMES[fileKey] ?? 1;
@@ -254,6 +267,7 @@ function createDefaultVolumeSettings() {
     showLoopProgress: false,
     defaultTrackVolumesVersion: VOLUME_DEFAULTS_VERSION,
     tracks,
+    daySounds: { bells: true, maleScream: false, femaleScream: false },
   };
 }
 
@@ -274,6 +288,7 @@ function loadVolumeSettings() {
     showLoopProgress: defaults.showLoopProgress,
     defaultTrackVolumesVersion: defaults.defaultTrackVolumesVersion,
     tracks: { ...defaults.tracks },
+    daySounds: { ...defaults.daySounds },
   };
 
   try {
@@ -289,8 +304,17 @@ function loadVolumeSettings() {
       return settings;
     }
 
+    hasSavedVolumeSettings = true;
+
     settings.master = clampVolume(parsed.master, defaults.master);
     settings.showLoopProgress = parsed.showLoopProgress === true;
+    if (parsed.daySounds && typeof parsed.daySounds === "object") {
+      Object.keys(settings.daySounds).forEach((soundId) => {
+        if (typeof parsed.daySounds[soundId] === "boolean") {
+          settings.daySounds[soundId] = parsed.daySounds[soundId];
+        }
+      });
+    }
 
     if (parsed.tracks && typeof parsed.tracks === "object") {
       const shouldMigrateDefaultTracks = parsed.defaultTrackVolumesVersion !== VOLUME_DEFAULTS_VERSION;
@@ -316,6 +340,125 @@ function saveVolumeSettings() {
   } catch (error) {
     console.warn("Could not save volume settings.", error);
   }
+}
+
+function mergeSettingsChanges(previous, next) {
+  const merged = { ...previous, ...next };
+  ["tracks", "daySounds"].forEach((key) => {
+    if (previous[key] || next[key]) {
+      merged[key] = { ...(previous[key] || {}), ...(next[key] || {}) };
+    }
+  });
+  return merged;
+}
+
+function queueSharedSettingsChanges(changes) {
+  if (!controlServerAvailable || !window.ProjectBluffLighting) {
+    return;
+  }
+  pendingSettingsChanges = mergeSettingsChanges(pendingSettingsChanges, changes);
+  scheduleSettingsSync();
+}
+
+function scheduleSettingsSync(delay = SETTINGS_SYNC_DELAY_MS) {
+  if (settingsSyncTimerId !== null) {
+    return;
+  }
+  settingsSyncTimerId = window.setTimeout(() => {
+    settingsSyncTimerId = null;
+    flushSharedSettingsChanges().catch(() => {});
+  }, delay);
+}
+
+async function flushSharedSettingsChanges() {
+  if (settingsSavePromise) {
+    await settingsSavePromise;
+    if (Object.keys(pendingSettingsChanges).length) {
+      return flushSharedSettingsChanges();
+    }
+    return;
+  }
+  if (!controlServerAvailable || !Object.keys(pendingSettingsChanges).length) {
+    return;
+  }
+  inFlightSettingsChanges = pendingSettingsChanges;
+  pendingSettingsChanges = {};
+  settingsSavePromise = window.ProjectBluffLighting.updateSettings(inFlightSettingsChanges);
+  try {
+    await settingsSavePromise;
+    if (settingsSyncFailed) {
+      settingsSyncFailed = false;
+      setStatus("Settings synced.");
+    }
+    inFlightSettingsChanges = {};
+    if (latestSharedSettings) {
+      applySharedSettingsValues(latestSharedSettings);
+    }
+  } catch (error) {
+    pendingSettingsChanges = mergeSettingsChanges(inFlightSettingsChanges, pendingSettingsChanges);
+    inFlightSettingsChanges = {};
+    settingsSyncFailed = true;
+    setStatus("Settings have not reached the server. Retrying.");
+    scheduleSettingsSync(1000);
+    throw error;
+  } finally {
+    settingsSavePromise = null;
+    if (Object.keys(pendingSettingsChanges).length) {
+      scheduleSettingsSync();
+    }
+  }
+}
+
+function applySharedSettingsValues(settings, shouldSave = true) {
+  const desired = mergeSettingsChanges(
+    mergeSettingsChanges(settings, inFlightSettingsChanges), pendingSettingsChanges,
+  );
+  setMasterVolume(desired.master, false);
+  Object.keys(SOUND_FILES).forEach((fileKey) => {
+    if (getTrackVolume(fileKey) !== desired.tracks[fileKey]) {
+      setTrackVolume(fileKey, desired.tracks[fileKey], false);
+    }
+  });
+  if (volumeSettings.showLoopProgress !== desired.showLoopProgress) {
+    setLoopProgressEnabled(desired.showLoopProgress, false);
+  }
+  Object.assign(daySoundState, desired.daySounds);
+  setDaySoundButtonStates();
+  if (shouldSave) {
+    saveVolumeSettings();
+  }
+}
+
+function applySharedSettings(state) {
+  if (!state.settings || !state.settings.tracks || !state.settings.daySounds) {
+    return;
+  }
+  latestSharedSettings = state.settings;
+  sharedSettingsInitialized = state.settingsInitialized === true;
+  if (!sharedSettingsInitialized) {
+    migrateSavedSettings();
+  }
+  applySharedSettingsValues(state.settings, sharedSettingsInitialized);
+}
+
+function migrateSavedSettings() {
+  if (sharedSettingsInitialized || !hasSavedVolumeSettings || settingsMigrationAttempted) {
+    return;
+  }
+  settingsMigrationAttempted = true;
+  window.ProjectBluffLighting.updateSettings(initialSavedSettings, { initializeOnly: true })
+    .then(() => {
+      if (settingsMigrationFailed) {
+        settingsMigrationFailed = false;
+        setStatus("Saved settings synced.");
+      }
+    })
+    .catch(() => {
+      settingsMigrationAttempted = false;
+      settingsMigrationFailed = true;
+      setStatus("Saved browser settings have not reached the server. Retrying.");
+      window.setTimeout(migrateSavedSettings, 1000);
+    });
 }
 
 function loadLocalMuted() {
@@ -405,6 +548,7 @@ function setMasterVolume(volume, shouldSave = true) {
 
   if (shouldSave) {
     saveVolumeSettings();
+    queueSharedSettingsChanges({ master: volumeSettings.master });
   }
 }
 
@@ -473,6 +617,7 @@ function setTrackVolume(fileKey, volume, shouldSave = true) {
 
   if (shouldSave) {
     saveVolumeSettings();
+    queueSharedSettingsChanges({ tracks: { [fileKey]: volumeSettings.tracks[fileKey] } });
   }
 }
 
@@ -493,6 +638,7 @@ function setLoopProgressEnabled(isEnabled, shouldSave = true) {
 
   if (shouldSave) {
     saveVolumeSettings();
+    queueSharedSettingsChanges({ showLoopProgress: volumeSettings.showLoopProgress });
   }
 }
 
@@ -565,6 +711,7 @@ function resetArmedScreams() {
   daySoundState.maleScream = false;
   daySoundState.femaleScream = false;
   setDaySoundButtonStates();
+  saveVolumeSettings();
 }
 
 function toggleDaySound(soundId) {
@@ -575,6 +722,8 @@ function toggleDaySound(soundId) {
   if (soundId === "bells") {
     daySoundState.bells = !daySoundState.bells;
     setDaySoundButtonStates();
+    saveVolumeSettings();
+    queueSharedSettingsChanges({ daySounds: { bells: daySoundState.bells } });
     setStatus(daySoundState.bells ? "DAY bells armed." : "DAY bells off.");
     return;
   }
@@ -585,6 +734,8 @@ function toggleDaySound(soundId) {
 
   daySoundState[soundId] = !daySoundState[soundId];
   setDaySoundButtonStates();
+  saveVolumeSettings();
+  queueSharedSettingsChanges({ daySounds: { [soundId]: daySoundState[soundId] } });
 }
 
 function getArmedMurderCue() {
@@ -1637,7 +1788,7 @@ function runDayCue(audioEvents = [], sync = {}) {
   }
 
   playMurderCue(hasMurderCue ? murderCue : null, elapsed);
-  if (hasMurderCue) {
+  if (hasMurderCue && !controlServerAvailable) {
     resetArmedScreams();
   }
 
@@ -1874,6 +2025,8 @@ function applySharedControlState(state) {
     return;
   }
 
+  applySharedSettings(state);
+
   const stage = state.currentStage;
   if (stage !== null && !Object.hasOwn(STAGES, stage)) {
     return;
@@ -2010,6 +2163,7 @@ async function handleStageTap(stage) {
   setStatus(loadPromise ? "Starting cue..." : "Loading audio files...");
 
   try {
+    await flushSharedSettingsChanges();
     await ensureAudioReady();
     const lightingTriggers = window.ProjectBluffLighting
       ? window.ProjectBluffLighting.buildStageTriggers(stage, {

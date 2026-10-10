@@ -1,4 +1,5 @@
 import copy
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -201,11 +202,134 @@ def test_every_api_response_is_never_cacheable(app_bundle):
         client.get("/api/lighting/config"),
         client.get("/api/lighting/status"),
         client.get("/api/control/state"),
+        client.patch("/api/control/settings", json={"changes": {"master": 0.6}}),
         client.post("/api/control/trigger", json={"trigger": "day"}),
     ]
     for response in responses:
         assert "no-store" in response.headers["Cache-Control"]
         assert response.headers["Pragma"] == "no-cache"
+
+
+def test_playback_settings_are_shared_pushed_and_restored_after_restart(app_bundle, tmp_path):
+    app, client, runtime = app_bundle
+    before = client.get("/api/control/state").get_json()
+    changes = {
+        "master": 0.41,
+        "tracks": {"day": 0.23, "nominationVoting": 0.62},
+        "showLoopProgress": True,
+        "daySounds": {"bells": False, "femaleScream": True},
+    }
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        waiting = executor.submit(
+            app.extensions["bluff_control_state"].wait_for_revision, before["revision"], 1.0
+        )
+        response = client.patch("/api/control/settings", json={"changes": changes})
+        assert response.status_code == 200
+        saved = response.get_json()["state"]
+        assert waiting.result(timeout=1.0)["settings"] == saved["settings"]
+    assert saved["settingsInitialized"] is True
+    assert saved["revision"] == before["revision"] + 1
+    assert saved["cueRevision"] == before["cueRevision"]
+    assert saved["currentStage"] is None
+    assert runtime.calls == []
+    with app.test_client() as remote:
+        assert remote.get("/api/control/state").get_json()["settings"] == saved["settings"]
+        stream = remote.get("/api/control/events?afterRevision=-1", buffered=False)
+        event = next(stream.response).decode("utf-8")
+        stream.close()
+        pushed = json.loads(event.split("data: ")[1])
+        assert pushed["settings"] == saved["settings"]
+
+    restarted = create_app(tmp_path / "lighting.json", FakeRuntime())
+    restored = restarted.test_client().get("/api/control/state").get_json()
+    assert restored["sessionId"] != saved["sessionId"]
+    assert restored["settings"] == saved["settings"]
+    assert restored["settingsInitialized"] is True
+    assert restored["currentStage"] is None
+
+
+def test_simultaneous_settings_patches_preserve_unrelated_device_changes(app_bundle):
+    app, client, _ = app_bundle
+
+    def patch(changes):
+        with app.test_client() as remote:
+            return remote.patch("/api/control/settings", json={"changes": changes}).status_code
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        results = list(executor.map(patch, [
+            {"master": 0.28, "tracks": {"day": 0.19}},
+            {"tracks": {"nightLoop": 0.56}, "daySounds": {"bells": False}},
+            {"showLoopProgress": True, "daySounds": {"maleScream": True}},
+        ]))
+    assert results == [200, 200, 200]
+    settings = client.get("/api/control/state").get_json()["settings"]
+    assert settings["master"] == 0.28
+    assert settings["tracks"]["day"] == 0.19
+    assert settings["tracks"]["nightLoop"] == 0.56
+    assert settings["daySounds"] == {"bells": False, "maleScream": True, "femaleScream": False}
+    assert settings["showLoopProgress"] is True
+
+
+def test_existing_browser_settings_can_initialize_the_server_only_once(app_bundle):
+    _, client, _ = app_bundle
+    assert client.get("/api/control/state").get_json()["settingsInitialized"] is False
+    initial = client.patch("/api/control/settings", json={
+        "changes": {"master": 0.31, "tracks": {"day": 0.47}}, "initializeOnly": True,
+    }).get_json()["state"]
+    stale = client.patch("/api/control/settings", json={
+        "changes": {"master": 0.99, "tracks": {"day": 1.0}}, "initializeOnly": True,
+    }).get_json()["state"]
+    assert stale == initial
+    identical = client.patch("/api/control/settings", json={
+        "changes": {"master": 0.31},
+    }).get_json()["state"]
+    assert identical["revision"] == initial["revision"]
+
+
+@pytest.mark.parametrize("payload", [
+    {}, {"changes": {}}, {"changes": []}, {"changes": {"muted": True}},
+    {"changes": {"master": True}}, {"changes": {"master": "0.5"}},
+    {"changes": {"master": -0.01}}, {"changes": {"master": 1.01}},
+    {"changes": {"master": float("nan")}}, {"changes": {"master": float("inf")}},
+    {"changes": {"tracks": {"unknown": 0.2}}}, {"changes": {"tracks": {"day": None}}},
+    {"changes": {"daySounds": {"bells": 1}}}, {"changes": {"showLoopProgress": "true"}},
+    {"changes": {"master": 0.3}, "initializeOnly": 1},
+    {"changes": {"master": 0.3}, "extra": True},
+])
+def test_invalid_playback_settings_do_not_change_shared_state(app_bundle, payload):
+    _, client, _ = app_bundle
+    before = client.get("/api/control/state").get_json()
+    assert client.patch("/api/control/settings", json=payload).status_code == 400
+    assert client.get("/api/control/state").get_json() == before
+
+
+def test_failed_settings_save_keeps_the_previous_shared_state(app_bundle, monkeypatch):
+    app, client, _ = app_bundle
+    before = client.get("/api/control/state").get_json()
+
+    def fail_save(_):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(app.extensions["bluff_control_state"]._settings_store, "save", fail_save)
+    response = client.patch("/api/control/settings", json={"changes": {"master": 0.35}})
+    assert response.status_code == 500
+    assert client.get("/api/control/state").get_json() == before
+
+
+def test_day_consumes_shared_scream_arming_without_changing_the_confirmed_sounds(app_bundle):
+    app, client, _ = app_bundle
+    client.patch("/api/control/settings", json={
+        "changes": {"daySounds": {"maleScream": True, "femaleScream": True}},
+    })
+    day = client.post("/api/control/trigger", json={
+        "trigger": "day", "auxiliaryTriggers": ["bells", "femaleScream"],
+    }).get_json()["state"]
+    assert day["audioEvents"] == ["bells", "femaleScream"]
+    assert day["settings"]["daySounds"] == {
+        "bells": True, "maleScream": False, "femaleScream": False,
+    }
+    with app.test_client() as remote:
+        assert remote.get("/api/control/state").get_json()["settings"] == day["settings"]
 
 
 def test_config_is_shared_and_invalid_save_is_transactional(app_bundle):

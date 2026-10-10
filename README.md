@@ -14,6 +14,8 @@ Lighting configuration is disabled when the page is not connected to the local B
 
 Run the Bluff server on the show computer and open it from that computer or a phone on the same private network. All connected pages share the current stage, timer, soundtrack cue, lighting engine, and lighting configuration. A stage pressed on any controller starts or joins that cue on every connected browser. The server pushes control changes immediately and the existing state poll remains as a fallback. Browsers use the server-reported cue time once when the event arrives so loops and one-shots begin at the matching position; Bluff does not continually time-stretch or seek active playback.
 
+Master volume, each sound's volume, loop-progress display, and DAY sound arming are also shared. Changes update the controls and active audio on every connected device. The server saves these settings in `instance/playback-settings.json`, so refreshing, joining from another device, or restarting the server restores the current values. Before the first server save, the first connected browser with existing saved volume settings copies them to the server once. Open the computer's existing controller first when upgrading to retain its mix; after that, server values take precedence over each browser's old settings. Armed screams reset for every controller when DAY consumes them.
+
 The `MUTE` control beside Master volume is saved only in that browser. Muting sets that browser's output to silence without stopping its cue timeline, so it can be unmuted during a stage without restarting the music. Use this to keep the show computer audible while leaving phones and backup controllers muted. On each device, tap `MUTE` once after opening Bluff to satisfy browsers that require a local gesture before remote audio may play; tap again if that device should remain audible.
 
 The saved engine selector is mutually exclusive: `ART-NET` uses Bluff's native DMX engine, while `OSC` sends complete event messages to QLab or another OSC receiver. Both engines use the same Arm control and start disarmed after every server launch.
@@ -56,6 +58,7 @@ Optional server overrides:
 ```bash
 BLUFF_HOST=0.0.0.0 BLUFF_PORT=5050 .venv/bin/python server.py
 BLUFF_LIGHTING_CONFIG_PATH=/safe/private/path/lighting-config.json .venv/bin/python server.py
+BLUFF_PLAYBACK_SETTINGS_PATH=/safe/private/path/playback-settings.json .venv/bin/python server.py
 ```
 
 Runtime lighting configuration is stored in `instance/lighting-config.json`, which is ignored by Git. `lighting-config.example.json` documents the safe empty schema.
@@ -143,7 +146,7 @@ Install development dependencies and run all automated checks:
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
-node --test tests/frontend_behavior.test.js
+node --test tests/*.test.js
 node --check app.js
 node --check lighting-control.js
 node --check service-worker.js
