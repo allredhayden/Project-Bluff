@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="styles.css">
     <script src="lighting-control.js" defer></script>
     <script src="app.js" defer></script>
+    <script src="text-messages.js" defer></script>
   </head>
   <body>
     <main class="app" aria-labelledby="app-title">
@@ -16,6 +17,7 @@
           <h1 id="app-title">Soundtrack</h1>
         </div>
         <div class="stage-indicator" data-active-stage>Idle</div>
+        <button class="text-open-button" type="button" data-text-open aria-haspopup="dialog" aria-expanded="false" aria-controls="silent-messages">TEXT</button>
         <button class="settings-button" type="button" data-settings-open aria-label="Open settings">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
@@ -176,6 +178,43 @@
         <p class="status-line" data-status role="status" aria-live="polite">Preloading audio files...</p>
       </footer>
     </main>
+
+    <section class="text-modal" id="silent-messages" data-text-modal role="dialog" aria-modal="true" aria-label="Silent messages" hidden>
+      <div class="text-sheet">
+        <header class="text-header">
+          <button class="text-back-button" type="button" data-text-close>Back to Soundtrack</button>
+        </header>
+        <div class="text-mode-tabs" role="tablist" aria-label="Message mode">
+          <button class="text-mode-button" type="button" id="billboard-tab" data-text-mode="billboard" role="tab" aria-selected="true" aria-controls="billboard-panel">Billboard</button>
+          <button class="text-mode-button" type="button" id="conversation-tab" data-text-mode="conversation" role="tab" aria-selected="false" aria-controls="conversation-panel" tabindex="-1">Conversation</button>
+        </div>
+        <section class="text-panel" id="billboard-panel" data-text-panel="billboard" role="tabpanel" aria-labelledby="billboard-tab">
+          <div class="text-control-rail">
+            <span class="text-auto-fit">Auto fit</span>
+            <div class="text-rail-actions">
+              <button class="text-clear-button" type="button" data-text-clear="billboard" aria-label="Clear billboard">Clear</button>
+              <button class="text-command-button" type="button" data-billboard-edit>Edit</button>
+            </div>
+          </div>
+          <div class="billboard-stage" data-billboard-stage>
+            <p class="billboard-message" data-billboard-message></p>
+            <button class="text-empty-button" type="button" data-billboard-empty>Write a message</button>
+          </div>
+          <textarea class="text-editor billboard-editor" data-billboard-editor aria-label="Billboard message" placeholder="Write a message..." spellcheck="false" autocomplete="off" hidden></textarea>
+        </section>
+        <section class="text-panel" id="conversation-panel" data-text-panel="conversation" role="tabpanel" aria-labelledby="conversation-tab" hidden>
+          <div class="text-control-rail text-size-rail" role="group" aria-label="Conversation text size">
+            <button class="text-size-button" type="button" data-text-smaller aria-label="Decrease text size">−</button>
+            <output class="text-size-value" data-text-size aria-live="polite">36 px</output>
+            <button class="text-size-button" type="button" data-text-larger aria-label="Increase text size">+</button>
+            <button class="text-clear-button" type="button" data-text-clear="conversation" aria-label="Clear conversation">Clear</button>
+            <button class="text-command-button conversation-top-done" type="button" data-conversation-finish>Done</button>
+          </div>
+          <textarea class="text-editor conversation-editor" data-conversation-editor aria-label="Conversation" placeholder="Tap here to talk silently..." spellcheck="false" autocomplete="off"></textarea>
+          <button class="text-edit-footer" type="button" data-conversation-done>Tap text to edit</button>
+        </section>
+      </div>
+    </section>
 
     <section
       class="settings-modal"

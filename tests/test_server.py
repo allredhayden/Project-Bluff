@@ -150,6 +150,7 @@ def test_static_server_health_range_and_route_whitelist(app_bundle):
     assert client.get("/").status_code == 200
     assert client.get("/app.js").mimetype == "text/javascript"
     assert client.get("/lighting-control.js").mimetype == "text/javascript"
+    assert client.get("/text-messages.js").mimetype == "text/javascript"
     assert client.get("/sounds/BotC%20Gong.mp3", headers={"Range": "bytes=0-31"}).status_code == 206
     voting_sound = client.get(
         "/sounds/BotC%20Nomination%20Voting%20Sound.mp3",

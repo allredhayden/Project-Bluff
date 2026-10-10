@@ -360,6 +360,10 @@ def create_app(
     def lighting_javascript():
         return send_from_directory(PROJECT_ROOT, "lighting-control.js", conditional=True)
 
+    @app.get("/text-messages.js")
+    def text_messages_javascript():
+        return send_from_directory(PROJECT_ROOT, "text-messages.js", conditional=True)
+
     @app.get("/styles.css")
     def styles():
         return send_from_directory(PROJECT_ROOT, "styles.css", conditional=True)

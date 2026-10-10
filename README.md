@@ -4,6 +4,14 @@ Project Bluff is a mobile-first Blood on the Clocktower soundtrack and lighting 
 
 ## Supported modes
 
+### Silent messages on the Storyteller's phone
+
+Tap **TEXT** in the top header to talk silently to a player during the night. **Billboard** displays one message at the largest size that fits the screen; tap **Edit**, write the message, then **Done** to show it. **Conversation** is one shared editable text area on the same phone. Use Enter for line breaks and the **− / +** controls at the top to change its size. Tap **Done** below the conversation to dismiss the keyboard.
+
+Each mode has a **Clear** button at the top that erases only that mode's draft. While the text screen is open, the soundtrack controller is hidden and cannot be clicked, including when the keyboard reduces the visible screen area.
+
+Each mode keeps its own draft in that browser tab, including after a refresh. Text and the selected size are stored only in the tab's session storage, never sent to the Bluff server or synchronized to other devices. Closing the tab ends that saved session. **Back to Soundtrack** returns to the controller while the current soundtrack continues.
+
 ### Public audio-only site
 
 The root HTML, CSS, JavaScript, service worker, and sound files remain a static site. GitHub Pages can continue serving audio, timers, DAY sound choices, volume settings, and offline-cached assets.
@@ -149,6 +157,7 @@ Install development dependencies and run all automated checks:
 node --test tests/*.test.js
 node --check app.js
 node --check lighting-control.js
+node --check text-messages.js
 node --check service-worker.js
 ```
 

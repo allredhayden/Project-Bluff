@@ -1,5 +1,5 @@
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const AUDIO_CACHE_NAME = "botc-soundtrack-v22";
+const AUDIO_CACHE_NAME = "botc-soundtrack-v24";
 const DECODE_WORK_UNITS = 2000000;
 const RESUMABLE_LOOPS = new Set(["day"]);
 
